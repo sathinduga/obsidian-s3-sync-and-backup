@@ -39,6 +39,6 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: ceilaolabs/obsidian-s3-sync-and-backup
+          slug: sathinduga/obsidian-s3-sync-and-backup
           files: ./coverage/lcov.info
           fail_ci_if_error: false
