@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.2.3](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.2...4.2.3) (2026-08-28)
+
+
+### Bug Fixes
+
+* **deps:** resolve js-yaml and @babel/core Dependabot alerts ([f1fd3d1](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/f1fd3d15c595d61322d862d481ace281623bbfa0))
+
+
+### Miscellaneous
+
+* update repository references after move to sathinduga ([7474549](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/7474549fd3f16d9db29c71bafa0b69b982447212))
+* update repository references after move to sathinduga ([0cfbcde](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/0cfbcdec3131d18fa4f3d374266950018512850a))
+
 ## [4.2.2](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/compare/4.2.1...4.2.2) (2026-08-17)
 
 
