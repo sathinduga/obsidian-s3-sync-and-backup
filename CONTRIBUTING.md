@@ -241,7 +241,7 @@ Run `npm run test:coverage` to generate a coverage report. The CI enforces:
 
 ## Reporting Issues
 
-When filing a bug report on [GitHub Issues](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/issues):
+When filing a bug report on [GitHub Issues](https://github.com/sathinduga/obsidian-s3-sync-and-backup/issues):
 
 1.  **Search first** — check if the issue already exists.
 2.  **Use the bug template** if available.

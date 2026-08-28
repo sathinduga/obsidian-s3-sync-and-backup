@@ -2,11 +2,11 @@
 
 Vault synchronization and scheduled backups across devices using S3-compatible storage (AWS S3, Cloudflare R2, Backblaze B2, RustFS, etc.) with optional end-to-end encryption.
 
-[![Latest Release](https://img.shields.io/github/v/release/ceilaolabs/obsidian-s3-sync-and-backup?sort=semver)](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/sathinduga/obsidian-s3-sync-and-backup?sort=semver)](https://github.com/sathinduga/obsidian-s3-sync-and-backup/releases/latest)
 ![Obsidian](https://img.shields.io/badge/Obsidian-1.0.0+-purple.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow.svg)](https://conventionalcommits.org)
-[![Codecov](https://codecov.io/github/ceilaolabs/obsidian-s3-sync-and-backup/branch/main/graph/badge.svg?token=A6V6CA2W1B)](https://codecov.io/github/ceilaolabs/obsidian-s3-sync-and-backup)
+[![Codecov](https://codecov.io/github/sathinduga/obsidian-s3-sync-and-backup/branch/main/graph/badge.svg?token=A6V6CA2W1B)](https://codecov.io/github/sathinduga/obsidian-s3-sync-and-backup)
 
 ## Features
 
@@ -33,7 +33,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 ---
 
 ### Manual Installation
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/releases).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/sathinduga/obsidian-s3-sync-and-backup/releases).
 2. Create the folder: `<VaultPath>/.obsidian/plugins/simple-storage-sync-and-backup/`
 3. Copy the downloaded files into this folder.
 4. Reload Obsidian and enable the plugin in **Settings** → **Community plugins**.
@@ -302,11 +302,11 @@ By default, <code>**/workspace*</code> and <code>.trash/**</code> are excluded. 
 
 ## Support & Contributing
 
-- **Issues**: [Report bugs or request features](https://github.com/ceilaolabs/obsidian-s3-sync-and-backup/issues)
+- **Issues**: [Report bugs or request features](https://github.com/sathinduga/obsidian-s3-sync-and-backup/issues)
 - **Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## License
 
-MIT © [Ceilão Labs](https://github.com/ceilaolabs)
+MIT © [Sathindu](https://github.com/sathinduga)
 
 Made with love for the Obsidian community
