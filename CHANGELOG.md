@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.2.4](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.3...4.2.4) (2026-09-07)
+
+
+### Miscellaneous
+
+* **deps:** bump fast-uri from 3.1.5 to 3.1.7 in the npm_and_yarn group across 1 directory ([57f5e77](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/57f5e77944d7f4ebd9edf38c9aba400e9fa029e1))
+* **deps:** bump fast-uri in the npm_and_yarn group across 1 directory ([9a46bb2](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/9a46bb2d468c584d4ce0a364db406bc1fa57113b))
+
 ## [4.2.3](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.2...4.2.3) (2026-08-28)
 
 
