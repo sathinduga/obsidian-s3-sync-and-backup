@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.2.5](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.4...4.2.5) (2026-09-07)
+
+
+### Miscellaneous
+
+* **deps-dev:** bump @humanfs/node ([0269aa2](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/0269aa2a36b4c47ef31c3f949a41ae829968bcce))
+* **deps-dev:** bump @humanfs/node from 0.16.7 to 0.16.8 in the npm_and_yarn group across 1 directory ([9e6b3d6](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/9e6b3d67017efdc52964bba4bee59d8d189873d7))
+
 ## [4.2.4](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.3...4.2.4) (2026-09-07)
 
 
