@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.2.6](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.5...4.2.6) (2026-11-06)
+
+
+### Miscellaneous
+
+* **deps-dev:** bump brace-expansion ([9da2dcc](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/9da2dcce9a12cbfbbf2500c55b506ee4deb01a13))
+* **deps:** bump the npm_and_yarn group across 1 directory with 2 updates ([54bd51f](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/54bd51fafd0346cbb929dc510145aa4041bc7183))
+
 ## [4.2.5](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.4...4.2.5) (2026-09-07)
 
 
