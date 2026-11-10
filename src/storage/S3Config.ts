@@ -20,6 +20,7 @@
  */
 
 import { S3ClientConfig } from '@aws-sdk/client-s3';
+import type { CredentialsResolver, S3Credentials } from '../utils/secrets';
 import { S3ProviderType, S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../types';
 import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
@@ -157,11 +158,17 @@ export function providerSupportsConditionalWrites(provider: S3ProviderType): boo
  * are resolved here via the helper functions above.
  *
  * @param settings - Full plugin settings object.
+ * @param resolveCredentials - Returns the current S3 credentials (read from SecretStorage).
+ *   Wrapped in an async SDK credential provider so each signing call sees the latest
+ *   secret values and no secret is retained in the client config.
  * @returns A ready-to-use `S3ClientConfig` for the `S3Client` constructor.
  * @throws {Error} If the selected provider requires an endpoint but none is
  *   configured (forwarded from `getEndpointForProvider`).
  */
-export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientConfig {
+export function buildS3ClientConfig(
+    settings: S3SyncBackupSettings,
+    resolveCredentials: CredentialsResolver,
+): S3ClientConfig {
     const endpoint = getEndpointForProvider(settings);
 
     const config: S3ClientConfig = {
@@ -170,10 +177,7 @@ export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientCon
         // RustFS and other S3-compatible endpoints which ignore the region
         // header entirely.
         region: settings.region || 'auto',
-        credentials: {
-            accessKeyId: settings.accessKeyId,
-            secretAccessKey: settings.secretAccessKey,
-        },
+        credentials: async () => resolveCredentials(),
         forcePathStyle: shouldForcePathStyle(settings),
         // Disable the SDK's default flexible-checksum behaviour for portability.
         //
@@ -220,10 +224,14 @@ export function buildS3ClientConfig(settings: S3SyncBackupSettings): S3ClientCon
  * unnecessary round-trip to S3.
  *
  * @param settings - Plugin settings to validate.
+ * @param credentials - Resolved S3 credentials (from SecretStorage).
  * @returns Array of human-readable validation error messages.  An empty
  *   array means settings are valid and a connection attempt is safe.
  */
-export function validateConnectionSettings(settings: S3SyncBackupSettings): string[] {
+export function validateConnectionSettings(
+    settings: S3SyncBackupSettings,
+    credentials: S3Credentials,
+): string[] {
     const errors: string[] = [];
 
     // Provider must be one of the supported types. TypeScript's `S3ProviderType`
@@ -241,12 +249,12 @@ export function validateConnectionSettings(settings: S3SyncBackupSettings): stri
         errors.push('Bucket name is required');
     }
 
-    if (!settings.accessKeyId) {
-        errors.push('Access Key ID is required');
+    if (!credentials.accessKeyId) {
+        errors.push('Access Key ID is required (select a secret in Settings)');
     }
 
-    if (!settings.secretAccessKey) {
-        errors.push('Secret Access Key is required');
+    if (!credentials.secretAccessKey) {
+        errors.push('Secret Access Key is required (select a secret in Settings)');
     }
 
     // Provider-specific validation
