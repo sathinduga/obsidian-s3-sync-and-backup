@@ -49,7 +49,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
    - **Endpoint URL**: Required for non-AWS providers (e.g. `https://s3.<REGION>.backblazeb2.com` for Backblaze B2).
    - **Region**: Use `auto` for Cloudflare R2; for Backblaze B2 use the region in your endpoint (e.g. `us-west-004`).
    - **Bucket name**: Your S3 bucket.
-   - **Access Key ID** & **Secret Access Key**.
+   - **Access Key ID** & **Secret Access Key**: select an existing secret or create a new one (stored in Obsidian's secret storage, not in `data.json`). Requires Obsidian 1.11.4 or later.
    - **Force Path Style**: Only shown for the **Other S3-compatible** provider — AWS S3, Cloudflare R2, Backblaze B2, and RustFS each use a fixed addressing mode (path-style for R2/B2/RustFS, virtual-hosted for AWS).
 4. Click **Test Connection** to verify credentials and bucket access.
 
@@ -105,7 +105,7 @@ The plugin is a sync and backup tool, so by design it enumerates every file in y
 | **Local vault trash** (via `fileManager.trashFile`) | Files that were deleted on another device and propagated by sync. Honours **Obsidian's** *Files and Links → Deleted files* preference (system trash vs. `.trash/` folder vs. permanent). |
 | **IndexedDB** (database `obsidian-s3-sync-journal-{vaultName}`) | Per-file sync baselines (path, hash, size, mtime, ETag) used for three-way reconciliation, plus a destination fingerprint that detects when you reconnect to a different bucket/prefix. Vault-scoped so two vaults on the same device never share state. |
 | **Obsidian vault-scoped storage** (key `s3-sync-device-id`) | A randomly generated per-vault device identifier. The same ID is written into every uploaded S3 object's `obsidian-device-id` custom metadata for last-writer attribution, and into the `deviceId` field of every backup manifest. |
-| **`data.json`** (Obsidian plugin settings) | All plugin settings (S3 credentials, optional saved passphrase, sync/backup toggles, exclude patterns) plus the last-completed backup timestamp used by the scheduler. The plugin's own settings directory is hardcoded-excluded from sync so this file never leaves your device. |
+| **`data.json`** (Obsidian plugin settings) | All plugin settings (secret names for the S3 credentials, sync/backup toggles, exclude patterns) plus the last-completed backup timestamp used by the scheduler. Secret values are never written here. The plugin's own settings directory is hardcoded-excluded from sync so this file never leaves your device. |
 
 ### What is sent off your device
 
@@ -133,8 +133,8 @@ The plugin is a sync and backup tool, so by design it enumerates every file in y
 | **Endpoint URL** | S3-compatible endpoint URL. Required for non-AWS providers (e.g., `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` for R2, `https://s3.<REGION>.backblazeb2.com` for Backblaze B2, `http://localhost:9000` for RustFS). Hidden when provider is AWS. |
 | **Region** | AWS region (e.g., `us-east-1`). Use `auto` for Cloudflare R2; for Backblaze B2 use the region in your endpoint (e.g., `us-west-004`). |
 | **Bucket** | Name of your S3 bucket. |
-| **Access key ID** | Your S3 access key ID. Displayed as a password field. |
-| **Secret access key** | Your S3 secret access key. Displayed as a password field. |
+| **Access key ID** | Secret (from Obsidian's secret storage) holding your S3 access key ID. |
+| **Secret access key** | Secret (from Obsidian's secret storage) holding your S3 secret access key. |
 | **Force path style** | Use path-style URLs instead of virtual-hosted. Required for some self-hosted S3-compatible endpoints. Only shown for the **Other S3-compatible** provider — AWS, R2, B2, and RustFS each pin a fixed addressing mode internally. |
 | **Test connection** | Verify credentials, bucket access, and required permissions. |
 
@@ -143,7 +143,7 @@ The plugin is a sync and backup tool, so by design it enumerates every file in y
 | Setting | Description |
 | :--- | :--- |
 | **Enable end-to-end encryption** | Encrypt all files with XSalsa20-Poly1305 before uploading to S3. Requires a passphrase (minimum 8 characters). Shows a strength indicator while typing. |
-| **Remember passphrase** | Save the passphrase locally so the vault unlocks automatically on startup. The passphrase is stored in the plugin's `data.json`, which is hardcoded-excluded from sync. |
+| **Remember passphrase** | Save the passphrase locally so the vault unlocks automatically on startup. The passphrase is stored in Obsidian's secret storage (not in `data.json`). |
 | **Unlock** | When the vault is encrypted but locked (e.g., after restarting Obsidian without "Remember passphrase"), enter your passphrase to unlock sync and backup. |
 | **Disable encryption** | Re-upload all files as plaintext and remove the encryption marker. Shows a confirmation dialog. Other devices switch to plaintext mode automatically on next sync. |
 
@@ -246,7 +246,7 @@ your-bucket/
     - **Manual operations** (sync now, backup now, test connection, download backup) only run when you invoke them from the command palette, status bar, or settings.
 - **No telemetry:** The plugin sends no usage data, error reports, or identifiers anywhere. Disabling sync and backups stops all network activity completely.
 - **No remote code execution:** All encryption and hashing runs locally in the browser. The plugin never fetches or evaluates code from the network.
-- **Credential protection:** S3 credentials and saved passphrases are stored in Obsidian's `data.json`, which is hardcoded-excluded from sync to prevent leakage.
+- **Credential protection:** S3 credentials and the remembered passphrase are stored in Obsidian's secret storage, never in `data.json`. Secrets are local to each device: on a new device, re-select the S3 secrets and re-enter the passphrase. Values from older plugin versions are migrated automatically on first launch. Obsidian has no secret deletion API, so cleared secrets remain as empty entries.
 
 ---
 

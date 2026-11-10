@@ -26,6 +26,7 @@ import { BackupListModal } from './backup/BackupListModal';
 import { getOrCreateDeviceId } from './crypto/VaultMarker';
 import { EncryptionCoordinator } from './crypto/EncryptionCoordinator';
 import { BackupResult } from './types';
+import { SecretVault } from './utils/secrets';
 
 /**
  * S3SyncBackupPlugin — main plugin class.
@@ -34,6 +35,9 @@ import { BackupResult } from './types';
  */
 export default class S3SyncBackupPlugin extends Plugin {
 	settings!: S3SyncBackupSettings;
+
+	/** Access to credentials and the remembered passphrase in Obsidian SecretStorage */
+	secrets!: SecretVault;
 
 	/** S3 provider instance */
 	private s3Provider: S3Provider | null = null;
@@ -94,7 +98,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// S3 provider must be created first — all subsystems (sync engine, backup snapshot
 		// creator, etc.) accept it as a constructor argument. Creating it here once ensures
 		// a single authenticated client is reused across the entire plugin lifecycle.
-		this.s3Provider = new S3Provider(this.settings);
+		this.s3Provider = new S3Provider(
+			this.settings,
+			undefined,
+			() => this.secrets.getCredentials(this.settings),
+		);
 
 		// Status bar
 		this.statusBar = new StatusBar(this);
@@ -289,10 +297,18 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Load plugin settings from disk.
+	 * Load plugin settings from disk and migrate legacy plaintext secrets.
+	 *
+	 * Older versions stored `accessKeyId`, `secretAccessKey` and `savedPassphrase` in
+	 * `data.json`; they are moved to SecretStorage and removed from disk here.
 	 */
 	async loadSettings(): Promise<void> {
+		this.secrets = new SecretVault(this.app.secretStorage);
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<S3SyncBackupSettings> | null);
+
+		if (this.secrets.migrateLegacySettings(this.settings)) {
+			await this.saveData(this.settings);
+		}
 	}
 
 	/**
@@ -373,8 +389,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		if (state.remoteMode === 'encrypted' && !state.hasKey) {
 			// Auto-unlock with saved passphrase if "remember passphrase" is enabled
-			if (this.settings.rememberPassphrase && this.settings.savedPassphrase) {
-				const success = await this.encryptionCoordinator.unlock(this.settings.savedPassphrase);
+			const savedPassphrase = this.settings.rememberPassphrase ? this.secrets.getPassphrase() : '';
+			if (savedPassphrase) {
+				const success = await this.encryptionCoordinator.unlock(savedPassphrase);
 				if (success) {
 					if (this.settings.debugLogging) {
 						console.debug('[S3 Sync] Auto-unlocked vault with saved passphrase');
@@ -383,7 +400,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 				}
 				// Saved passphrase is wrong (changed on another device?) — clear it
 				this.settings.rememberPassphrase = false;
-				this.settings.savedPassphrase = '';
+				this.secrets.clearPassphrase();
 				await this.saveSettings();
 				new Notice('Saved passphrase is incorrect — enter the current passphrase in settings', 10000);
 				return;

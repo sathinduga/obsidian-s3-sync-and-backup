@@ -9,12 +9,35 @@
 import {
     getEndpointForProvider,
     shouldForcePathStyle,
-    buildS3ClientConfig,
-    validateConnectionSettings,
+    buildS3ClientConfig as buildS3ClientConfigRaw,
+    validateConnectionSettings as validateConnectionSettingsRaw,
     getProviderDisplayName,
     providerSupportsConditionalWrites,
 } from '../../src/storage/S3Config';
 import { S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../../src/types';
+import type { CredentialsResolver, S3Credentials } from '../../src/utils/secrets';
+
+/** Credentials as resolved from SecretStorage in a configured plugin. */
+const TEST_CREDENTIALS: S3Credentials = {
+    accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+    secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+};
+
+/** Wrapper defaulting to valid credentials so tests only override what they exercise. */
+function buildS3ClientConfig(
+    settings: S3SyncBackupSettings,
+    resolver: CredentialsResolver = () => TEST_CREDENTIALS,
+) {
+    return buildS3ClientConfigRaw(settings, resolver);
+}
+
+/** Wrapper defaulting to valid credentials so tests only override what they exercise. */
+function validateConnectionSettings(
+    settings: S3SyncBackupSettings,
+    credentials: S3Credentials = TEST_CREDENTIALS,
+): string[] {
+    return validateConnectionSettingsRaw(settings, credentials);
+}
 
 /**
  * Creates a minimal settings object for testing
@@ -26,10 +49,11 @@ function createTestSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3Sy
         endpoint: '',
         region: 'us-east-1',
         bucket: 'test-bucket',
-        accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
-        secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+        accessKeyIdSecret: 'access-key-id',
+        secretAccessKeySecret: 'secret-access-key',
         forcePathStyle: false,
         encryptionEnabled: false,
+        rememberPassphrase: false,
         syncEnabled: true,
         syncPrefix: 'vault',
         autoSyncEnabled: false,
@@ -211,7 +235,7 @@ describe('S3Config', () => {
         /**
          * Verifies complete config structure for AWS
          */
-        it('should build config for AWS', () => {
+        it('should build config for AWS', async () => {
             const settings = createTestSettings({
                 provider: 'aws',
                 region: 'us-west-2',
@@ -219,12 +243,25 @@ describe('S3Config', () => {
             const config = buildS3ClientConfig(settings);
 
             expect(config.region).toBe('us-west-2');
-            expect(config.credentials).toEqual({
-                accessKeyId: settings.accessKeyId,
-                secretAccessKey: settings.secretAccessKey,
-            });
+            // Credentials are a lazy provider: no secret is stored in the config itself.
+            expect(typeof config.credentials).toBe('function');
+            await expect((config.credentials as () => Promise<S3Credentials>)()).resolves.toEqual(TEST_CREDENTIALS);
             expect(config.forcePathStyle).toBe(false);
             expect(config.endpoint).toBeUndefined();
+        });
+
+        /**
+         * The credentials provider re-reads the resolver on every call so a
+         * secret rotated in SecretStorage is used without rebuilding the client.
+         */
+        it('should resolve credentials lazily on each call', async () => {
+            let current: S3Credentials = { accessKeyId: 'a1', secretAccessKey: 's1' };
+            const config = buildS3ClientConfig(createTestSettings(), () => current);
+            const provider = config.credentials as () => Promise<S3Credentials>;
+
+            await expect(provider()).resolves.toEqual({ accessKeyId: 'a1', secretAccessKey: 's1' });
+            current = { accessKeyId: 'a2', secretAccessKey: 's2' };
+            await expect(provider()).resolves.toEqual({ accessKeyId: 'a2', secretAccessKey: 's2' });
         });
 
         /**
@@ -303,21 +340,19 @@ describe('S3Config', () => {
         });
 
         /**
-         * Missing accessKeyId should be caught
+         * Missing access key ID secret should be caught
          */
         it('should return error for missing accessKeyId', () => {
-            const settings = createTestSettings({ accessKeyId: '' });
-            const errors = validateConnectionSettings(settings);
-            expect(errors).toContain('Access Key ID is required');
+            const errors = validateConnectionSettings(createTestSettings(), { ...TEST_CREDENTIALS, accessKeyId: '' });
+            expect(errors).toContain('Access Key ID is required (select a secret in Settings)');
         });
 
         /**
-         * Missing secretAccessKey should be caught
+         * Missing secret access key secret should be caught
          */
         it('should return error for missing secretAccessKey', () => {
-            const settings = createTestSettings({ secretAccessKey: '' });
-            const errors = validateConnectionSettings(settings);
-            expect(errors).toContain('Secret Access Key is required');
+            const errors = validateConnectionSettings(createTestSettings(), { ...TEST_CREDENTIALS, secretAccessKey: '' });
+            expect(errors).toContain('Secret Access Key is required (select a secret in Settings)');
         });
 
         /**
@@ -384,16 +419,12 @@ describe('S3Config', () => {
          * Multiple errors should all be reported
          */
         it('should return multiple errors when multiple fields are invalid', () => {
-            const settings = createTestSettings({
-                bucket: '',
-                accessKeyId: '',
-                secretAccessKey: '',
-            });
-            const errors = validateConnectionSettings(settings);
+            const settings = createTestSettings({ bucket: '' });
+            const errors = validateConnectionSettings(settings, { accessKeyId: '', secretAccessKey: '' });
 
             expect(errors).toContain('Bucket name is required');
-            expect(errors).toContain('Access Key ID is required');
-            expect(errors).toContain('Secret Access Key is required');
+            expect(errors).toContain('Access Key ID is required (select a secret in Settings)');
+            expect(errors).toContain('Secret Access Key is required (select a secret in Settings)');
             expect(errors.length).toBe(3);
         });
 
