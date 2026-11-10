@@ -73,6 +73,7 @@ obsidian-s3-sync-and-backup/
 │   │
 │   └── utils/                       # Shared utilities
 │       ├── retry.ts                 # Retry with exponential backoff
+│       ├── secrets.ts               # SecretStorage wrapper (S3 keys, passphrase) + legacy migration
 │       ├── time.ts                  # Time formatting (relative times)
 │       ├── paths.ts                 # Path normalization & glob matching
 │       └── vaultFiles.ts            # Vault file read helpers (text/binary)
@@ -144,6 +145,7 @@ s3://bucket/
 - **No Blocking:** Never block the main thread
 - **No Hardcoded Paths:** Use `settings.syncPrefix` / `settings.backupPrefix`
 - **Security:** No network calls without user reason, no telemetry, no remote code execution
+- **Secrets:** Never persist credentials or passphrases in `data.json`; use `SecretVault` (`src/utils/secrets.ts`) over `app.secretStorage`
 - **Mobile:** Do not assume desktop behavior
 
 ## Build & Test Commands

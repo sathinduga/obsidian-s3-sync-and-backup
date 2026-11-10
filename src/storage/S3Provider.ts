@@ -38,6 +38,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { PayloadFormat, S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncBackupSettings } from '../types';
 import { buildS3ClientConfig, providerSupportsConditionalWrites, validateConnectionSettings } from './S3Config';
+import type { CredentialsResolver } from '../utils/secrets';
 
 /**
  * S3Provider class
@@ -78,22 +79,18 @@ export class S3Provider {
      *
      * @param settings - Full plugin settings. Only the connection-related
      *   fields are used here; sync/backup fields are ignored.
-     */
-    /**
-     * Create a new S3Provider instance.
-     *
-     * The underlying `S3Client` is not created here; it is built lazily on
-     * the first operation so that construction never throws even if settings
-     * are incomplete at the time the plugin loads.
-     *
-     * @param settings - Full plugin settings. Only the connection-related
-     *   fields are used here; sync/backup fields are ignored.
      * @param client   - Optional pre-built `S3Client`. When provided, the
      *   lazy client builder is bypassed entirely. Used by E2E tests to inject
      *   a Node.js-compatible client (with `NodeHttpHandler`) instead of the
      *   Obsidian-specific `ObsidianHttpHandler`.
+     * @param resolveCredentials - Returns the S3 credentials from SecretStorage.
+     *   Defaults to empty credentials (connection validation then fails).
      */
-    constructor(settings: S3SyncBackupSettings, client?: S3Client) {
+    constructor(
+        settings: S3SyncBackupSettings,
+        client?: S3Client,
+        private readonly resolveCredentials: CredentialsResolver = () => ({ accessKeyId: '', secretAccessKey: '' }),
+    ) {
         this.settings = settings;
         this.client = client ?? null;
     }
@@ -119,7 +116,7 @@ export class S3Provider {
      */
     private getClient(): S3Client {
         if (!this.client) {
-            const config = buildS3ClientConfig(this.settings);
+            const config = buildS3ClientConfig(this.settings, this.resolveCredentials);
             this.client = new S3Client(config);
         }
         return this.client;
@@ -143,7 +140,7 @@ export class S3Provider {
      */
     async testConnection(): Promise<string> {
         // Validate settings first
-        const errors = validateConnectionSettings(this.settings);
+        const errors = validateConnectionSettings(this.settings, this.resolveCredentials());
         if (errors.length > 0) {
             throw new Error(`Configuration errors: ${errors.join(', ')}`);
         }

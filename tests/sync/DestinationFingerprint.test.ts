@@ -16,12 +16,11 @@ function createSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3SyncBa
 		endpoint: '',
 		region: 'us-east-1',
 		bucket: 'my-bucket',
-		accessKeyId: 'ignored-key',
-		secretAccessKey: 'ignored-secret',
+		accessKeyIdSecret: 'ignored-key',
+		secretAccessKeySecret: 'ignored-secret',
 		forcePathStyle: false,
 		encryptionEnabled: false,
 		rememberPassphrase: false,
-		savedPassphrase: '',
 		syncEnabled: true,
 		syncPrefix: 'vault',
 		autoSyncEnabled: false,
@@ -117,19 +116,17 @@ describe('computeDestinationFingerprint', () => {
 	});
 
 	it('ignores credential fields that do not affect data location', () => {
-		// Swapping IAM keys / passphrase settings does not move the data; the
-		// journal baselines remain valid and must not be invalidated.
+		// Swapping which secrets hold the IAM keys / toggling passphrase memory does not
+		// move the data; the journal baselines remain valid and must not be invalidated.
 		const a = computeDestinationFingerprint(createSettings({
-			accessKeyId: 'key-a',
-			secretAccessKey: 'secret-a',
+			accessKeyIdSecret: 'key-a',
+			secretAccessKeySecret: 'secret-a',
 			rememberPassphrase: false,
-			savedPassphrase: '',
 		}));
 		const b = computeDestinationFingerprint(createSettings({
-			accessKeyId: 'key-b',
-			secretAccessKey: 'secret-b',
+			accessKeyIdSecret: 'key-b',
+			secretAccessKeySecret: 'secret-b',
 			rememberPassphrase: true,
-			savedPassphrase: 'changed',
 		}));
 
 		expect(a).toBe(b);

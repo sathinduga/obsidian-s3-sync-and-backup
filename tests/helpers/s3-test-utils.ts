@@ -160,7 +160,10 @@ export function describeEachProvider(): ProviderDescribe {
  * @returns A configured `S3Client` talking to the provider's real endpoint.
  */
 export function createTestS3Client(provider: TestProvider): S3Client {
-    const config: S3ClientConfig = buildS3ClientConfig(createTestSettings(provider));
+    const config: S3ClientConfig = buildS3ClientConfig(createTestSettings(provider), () => {
+        const { accessKeyId, secretAccessKey } = getS3Config(provider);
+        return { accessKeyId, secretAccessKey };
+    });
     config.requestHandler = new NodeHttpHandler({
         connectionTimeout: 5000,
         socketTimeout: 30000,
@@ -189,12 +192,11 @@ export function createTestSettings(
         endpoint: config.endpoint,
         region: config.region,
         bucket: config.bucket,
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
+        accessKeyIdSecret: 'test-access-key-id',
+        secretAccessKeySecret: 'test-secret-access-key',
         forcePathStyle: provider.provider !== 'aws',
         encryptionEnabled: false,
         rememberPassphrase: false,
-        savedPassphrase: '',
         syncEnabled: true,
         syncPrefix: 'vault',
         autoSyncEnabled: false,

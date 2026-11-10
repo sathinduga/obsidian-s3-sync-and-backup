@@ -9,7 +9,7 @@
  * - Advanced (debug logging, exclude patterns)
  */
 
-import { App, Modal, Notice, PluginSettingTab, Setting } from 'obsidian';
+import { App, Modal, Notice, PluginSettingTab, SecretComponent, Setting } from 'obsidian';
 import type S3SyncBackupPlugin from './main';
 import {
 	S3ProviderType,
@@ -161,30 +161,24 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		// Access Key ID
 		new Setting(containerEl)
 			.setName('Access key ID')
-			.setDesc('Your S3 access key ID')
-			.addText((text) => {
-				text.setPlaceholder('AKIAIOSFODNN7EXAMPLE');
-				text.setValue(this.plugin.settings.accessKeyId);
-				text.inputEl.type = 'password';
-				text.onChange(async (value) => {
-					this.plugin.settings.accessKeyId = value;
-					await this.plugin.saveSettings();
-				});
-			});
+			.setDesc('Select or create a secret holding your S3 access key ID')
+			.addComponent((el) => new SecretComponent(this.app, el)
+				.setValue(this.plugin.settings.accessKeyIdSecret)
+				.onChange((value) => {
+					this.plugin.settings.accessKeyIdSecret = value;
+					void this.plugin.saveSettings();
+				}));
 
 		// Secret Access Key
 		new Setting(containerEl)
 			.setName('Secret access key')
-			.setDesc('Your S3 secret access key')
-			.addText((text) => {
-				text.setPlaceholder('Secret key');
-				text.setValue(this.plugin.settings.secretAccessKey);
-				text.inputEl.type = 'password';
-				text.onChange(async (value) => {
-					this.plugin.settings.secretAccessKey = value;
-					await this.plugin.saveSettings();
-				});
-			});
+			.setDesc('Select or create a secret holding your S3 secret access key')
+			.addComponent((el) => new SecretComponent(this.app, el)
+				.setValue(this.plugin.settings.secretAccessKeySecret)
+				.onChange((value) => {
+					this.plugin.settings.secretAccessKeySecret = value;
+					void this.plugin.saveSettings();
+				}));
 
 		// Force Path Style (only for the generic "Other S3-compatible" provider —
 		// AWS/R2/RustFS each pin path-style behaviour in `shouldForcePathStyle`).
@@ -316,7 +310,11 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		buttonEl.disabled = true;
 
 		try {
-			const provider = new S3Provider(this.plugin.settings);
+			const provider = new S3Provider(
+				this.plugin.settings,
+				undefined,
+				() => this.plugin.secrets.getCredentials(this.plugin.settings),
+			);
 			const message = await provider.testConnection();
 			provider.destroy();
 
@@ -393,7 +391,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					toggle.onChange(async (value) => {
 						this.plugin.settings.rememberPassphrase = value;
 						if (!value) {
-							this.plugin.settings.savedPassphrase = '';
+							this.plugin.secrets.clearPassphrase();
 						}
 						await this.plugin.saveSettings();
 					});
@@ -416,7 +414,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 							const success = await coordinator?.unlock(passphraseValue);
 							if (success) {
 								if (this.plugin.settings.rememberPassphrase) {
-									this.plugin.settings.savedPassphrase = passphraseValue;
+									this.plugin.secrets.setPassphrase(passphraseValue);
 									await this.plugin.saveSettings();
 								}
 								new Notice('Vault unlocked successfully');
@@ -452,7 +450,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					toggle.onChange(async (value) => {
 						this.plugin.settings.rememberPassphrase = value;
 						if (!value) {
-							this.plugin.settings.savedPassphrase = '';
+							this.plugin.secrets.clearPassphrase();
 						}
 						await this.plugin.saveSettings();
 					});
@@ -477,7 +475,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 						if (result?.success) {
 							this.plugin.settings.rememberPassphrase = false;
-							this.plugin.settings.savedPassphrase = '';
+							this.plugin.secrets.clearPassphrase();
 							await this.plugin.saveSettings();
 							this.plugin.onSettingsChanged();
 							this.display();
@@ -568,7 +566,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 						if (result?.success) {
 							if (this.plugin.settings.rememberPassphrase) {
-								this.plugin.settings.savedPassphrase = passphraseValue;
+								this.plugin.secrets.setPassphrase(passphraseValue);
 								await this.plugin.saveSettings();
 							}
 							this.showEncryptionSetup = false;
@@ -944,13 +942,14 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					const confirmed = await this.showResetConfirmation();
 					if (!confirmed) return;
 
-					const { provider, endpoint, region, bucket, accessKeyId, secretAccessKey, forcePathStyle } =
+					const { provider, endpoint, region, bucket, accessKeyIdSecret, secretAccessKeySecret, forcePathStyle } =
 						this.plugin.settings;
 
 					Object.assign(this.plugin.settings, { ...DEFAULT_SETTINGS });
 					Object.assign(this.plugin.settings, {
-						provider, endpoint, region, bucket, accessKeyId, secretAccessKey, forcePathStyle,
+						provider, endpoint, region, bucket, accessKeyIdSecret, secretAccessKeySecret, forcePathStyle,
 					});
+					this.plugin.secrets.clearPassphrase();
 
 					await this.plugin.saveSettings();
 					this.plugin.onSettingsChanged();
