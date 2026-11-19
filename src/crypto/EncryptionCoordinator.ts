@@ -18,10 +18,12 @@
  */
 
 import { App, Notice, TFile } from 'obsidian';
+import nacl from 'tweetnacl';
 import { S3Provider } from '../storage/S3Provider';
 import { SyncPayloadCodec } from '../sync/SyncPayloadCodec';
 import { SyncPathCodec } from '../sync/SyncPathCodec';
 import { SyncLease } from '../sync/SyncLease';
+import { computeDestinationFingerprint } from '../sync/DestinationFingerprint';
 import { SnapshotCreator } from '../backup/SnapshotCreator';
 import { BackupDownloader } from '../backup/BackupDownloader';
 import { VaultMarker } from './VaultMarker';
@@ -159,6 +161,24 @@ export class EncryptionCoordinator {
 
 		this.propagateKey(key);
 		return true;
+	}
+
+	/**
+	 * Check a passphrase before remembering it for the currently unlocked vault.
+	 * @param passphrase - Passphrase entered in settings.
+	 * @returns Whether the remote marker yields the key still in use by this session.
+	 */
+	async verifyCurrentPassphrase(passphrase: string): Promise<boolean> {
+		const currentKey = this.encryptionKey;
+		if (!currentKey || this.remoteMode !== 'encrypted' || this.shouldBlock()) return false;
+
+		const marker = this.vaultMarker;
+		const destination = computeDestinationFingerprint(this.settings);
+		const verifiedKey = await marker.verify(passphrase);
+		// Settings may change before the provider and coordinator receive the saved update.
+		return verifiedKey !== null && this.encryptionKey === currentKey && this.vaultMarker === marker &&
+			this.remoteMode === 'encrypted' && !this.shouldBlock() &&
+			computeDestinationFingerprint(this.settings) === destination && nacl.verify(currentKey, verifiedKey);
 	}
 
 	/**

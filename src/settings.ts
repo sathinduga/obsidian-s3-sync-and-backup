@@ -12,6 +12,7 @@
 import { App, Modal, Notice, PluginSettingTab, requireApiVersion, SecretComponent, Setting } from 'obsidian';
 import type { SettingDefinitionGroup, SettingDefinitionRender } from 'obsidian';
 import type S3SyncBackupPlugin from './main';
+import type { EncryptionCoordinator } from './crypto/EncryptionCoordinator';
 import {
 	S3ProviderType,
 	S3_PROVIDER_NAMES,
@@ -493,7 +494,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		}
 
 		// State: encrypted and key loaded (fully unlocked)
-		if (state?.remoteMode === 'encrypted' && state.hasKey) {
+		if (coordinator && state?.remoteMode === 'encrypted' && state.hasKey) {
 			const noteEl = containerEl.createDiv({ cls: 's3-sync-backup-info' });
 			noteEl.createEl('p', {
 				text: 'End-to-end encryption is active. All files are encrypted before upload.',
@@ -505,11 +506,16 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				.addToggle((toggle) => {
 					toggle.setValue(this.plugin.settings.rememberPassphrase);
 					toggle.onChange(async (value) => {
-						this.plugin.settings.rememberPassphrase = value;
-						if (!value) {
-							this.plugin.secrets.clearPassphrase();
+						toggle.setValue(this.plugin.settings.rememberPassphrase);
+						toggle.setDisabled(true);
+						try {
+							await this.updateUnlockedRememberPreference(value, coordinator);
+						} catch {
+							new Notice('Unable to update the remembered passphrase. Try again.');
+						} finally {
+							toggle.setValue(this.plugin.settings.rememberPassphrase);
+							toggle.setDisabled(false);
 						}
-						await this.plugin.saveSettings();
 					});
 				});
 
@@ -647,6 +653,37 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					});
 				});
 		}
+	}
+
+	/** Save the verified passphrase before turning on automatic unlock for an unlocked vault. */
+	private async updateUnlockedRememberPreference(remember: boolean, coordinator: EncryptionCoordinator): Promise<void> {
+		const passphrase = remember ? await this.promptForPassphrase() : null;
+		if (remember) {
+			if (!passphrase) return;
+			if (!await coordinator.verifyCurrentPassphrase(passphrase)) {
+				new Notice('Unable to verify the passphrase. Check the passphrase and storage connection, then try again.');
+				return;
+			}
+		}
+
+		const { settings, secrets } = this.plugin;
+		const previousPreference = settings.rememberPassphrase;
+		const previousSecret = secrets.getPassphrase();
+		const nextSecret = passphrase ?? '';
+		secrets.setPassphrase(nextSecret);
+		if (secrets.getPassphrase() !== nextSecret) throw new Error('Obsidian could not save the passphrase');
+		settings.rememberPassphrase = remember;
+		try {
+			await this.plugin.saveSettings();
+		} catch (error) {
+			settings.rememberPassphrase = previousPreference;
+			secrets.setPassphrase(previousSecret);
+			throw error;
+		}
+	}
+
+	private promptForPassphrase(): Promise<string | null> {
+		return new Promise((resolve) => { new RememberPassphraseModal(this.app, resolve).open(); });
 	}
 
 	/**
@@ -992,6 +1029,45 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 				});
 			});
 		});
+	}
+}
+
+/** Request the current vault passphrase for saving in Obsidian's Keychain. */
+class RememberPassphraseModal extends Modal {
+	constructor(app: App, private readonly resolve: (passphrase: string | null) => void) {
+		super(app);
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.createEl('h2', { text: 'Remember passphrase' });
+		contentEl.createEl('p', { text: 'Enter your vault passphrase to unlock automatically on startup.' });
+
+		const form = contentEl.createEl('form');
+		const label = form.createEl('label', { text: 'Vault passphrase' });
+		const input = label.createEl('input', {
+			attr: { type: 'password', autocomplete: 'off', required: '' },
+		});
+		const buttons = form.createDiv({ cls: 'modal-button-container' });
+		buttons.createEl('button', { text: 'Cancel', attr: { type: 'button' } })
+			.addEventListener('click', () => { this.close(); });
+		buttons.createEl('button', {
+			text: 'Remember passphrase',
+			cls: 'mod-cta',
+			attr: { type: 'submit' },
+		});
+		form.addEventListener('submit', (event) => {
+			event.preventDefault();
+			if (!input.value) return;
+			this.resolve(input.value);
+			this.close();
+		});
+		input.focus();
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+		this.resolve(null);
 	}
 }
 
