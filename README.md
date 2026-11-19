@@ -49,7 +49,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
    - **Endpoint URL**: Required for non-AWS providers (e.g. `https://s3.<REGION>.backblazeb2.com` for Backblaze B2).
    - **Region**: Use `auto` for Cloudflare R2; for Backblaze B2 use the region in your endpoint (e.g. `us-west-004`).
    - **Bucket name**: Your S3 bucket.
-   - **Access Key ID** & **Secret Access Key**: select an existing secret or create a new one (stored in Obsidian's secret storage, not in `data.json`). Requires Obsidian 1.11.4 or later.
+   - **Access Key ID** & **Secret Access Key**: select an existing secret or create a new one in Obsidian's Keychain. Requires Obsidian 1.11.5 or later for encrypted desktop secret storage. Plugin version 4.2.6 supports Obsidian 1.8.7 and later.
    - **Force Path Style**: Only shown for the **Other S3-compatible** provider — AWS S3, Cloudflare R2, Backblaze B2, and RustFS each use a fixed addressing mode (path-style for R2/B2/RustFS, virtual-hosted for AWS).
 4. Click **Test Connection** to verify credentials and bucket access.
 
@@ -246,7 +246,7 @@ your-bucket/
     - **Manual operations** (sync now, backup now, test connection, download backup) only run when you invoke them from the command palette, status bar, or settings.
 - **No telemetry:** The plugin sends no usage data, error reports, or identifiers anywhere. Disabling sync and backups stops all network activity completely.
 - **No remote code execution:** All encryption and hashing runs locally in the browser. The plugin never fetches or evaluates code from the network.
-- **Credential protection:** S3 credentials and the remembered passphrase are stored in Obsidian's secret storage, never in `data.json`. Secrets are local to each device: on a new device, re-select the S3 secrets and re-enter the passphrase. Values from older plugin versions are migrated automatically on first launch. Obsidian has no secret deletion API, so cleared secrets remain as empty entries.
+- **Credential protection:** On first launch after upgrading, the plugin moves legacy S3 credentials and any remembered passphrase from `data.json` to Obsidian's Keychain. It removes the legacy values after the replacement secrets can be read. Startup sync and catch-up backup wait for the encryption check and unlock. On a new device, add or select the S3 secrets in that device's Keychain and enter the passphrase. Obsidian has no secret deletion API, so cleared secrets remain as empty entries.
 
 ---
 
