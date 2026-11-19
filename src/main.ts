@@ -771,9 +771,12 @@ export default class S3SyncBackupPlugin extends Plugin {
 				}
 
 				if (this.settings.retentionEnabled && this.retentionManager) {
-					const deleted = await this.retentionManager.applyRetentionPolicy();
-					if (deleted > 0 && this.settings.debugLogging) {
-						console.debug(`[S3 Backup] Retention: deleted ${deleted} old backups`);
+					try {
+						await this.retentionManager.applyRetentionPolicy();
+					} catch (error) {
+						const message = error instanceof Error ? error.message : 'Unknown storage error';
+						console.error(`[S3 Backup] Retention cleanup failed: ${message}`);
+						new Notice(`Backup saved. Retention cleanup failed: ${message}`, 10000);
 					}
 				}
 

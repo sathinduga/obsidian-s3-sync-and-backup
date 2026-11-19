@@ -337,34 +337,22 @@ describeEach('Backup workflow E2E [$name]', (provider: TestProvider) => {
 	 * snapshots have been written to S3.
 	 */
 	describe('RetentionManager workflows', () => {
-		it('deletes older backups when copy-based retention is enabled and only two copies should remain', async () => {
-			const device = await createInitializedDevice();
+		it('keeps the latest seven snapshots across two consecutive retention deletions', async () => {
+			const keep = 7;
+			const device = await createInitializedDevice({
+				settingsOverrides: { retentionEnabled: true, retentionMode: 'copies', retentionCopies: keep },
+			});
 			device.vault.seed('notes/retention.md', 'retain me');
-
-			const first = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
-			await waitForNextBackupSecond();
-			const second = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
-			await waitForNextBackupSecond();
-			const third = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
-
-			const updatedSettings = {
-				...device.settings,
-				retentionEnabled: true,
-				retentionMode: 'copies' as const,
-				retentionCopies: 2,
-			};
-			device.retentionManager.updateSettings(updatedSettings);
-
-			const deletedBackups = await device.retentionManager.applyRetentionPolicy();
-			const remainingBackups = await device.retentionManager.listBackups();
-
-			expect(new Set([first.backupName, second.backupName, third.backupName]).size).toBe(3);
-			expect(deletedBackups).toBe(1);
-			expect(remainingBackups).toHaveLength(2);
-			expect(remainingBackups.map((backup) => backup.name).sort()).toEqual([
-				second.backupName,
-				third.backupName,
-			].sort());
+			const names: string[] = [];
+			for (let i = 0; i < keep + 2; i++) {
+				if (i > 0) await waitForNextBackupSecond();
+				const result = await device.snapshotCreator.createSnapshot(device.deviceId, 'E2EDevice');
+				expect(result.success).toBe(true);
+				names.push(result.backupName);
+				await expect(device.retentionManager.applyRetentionPolicy()).resolves.toBe(i >= keep ? 1 : 0);
+			}
+			const remaining = await device.retentionManager.listBackups();
+			expect(remaining.map(backup => backup.name).sort()).toEqual(names.slice(-keep).sort());
 		});
 	});
 });

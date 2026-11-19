@@ -2,7 +2,7 @@
  * Unit tests for S3Provider request shaping.
  */
 
-import { HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, DeleteObjectsCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 import { HttpResponse } from '@smithy/protocol-http';
 import { ObsidianHttpHandler } from '../../src/storage/ObsidianHttpHandler';
 import { S3Provider } from '../../src/storage/S3Provider';
@@ -38,6 +38,92 @@ function createSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3SyncBa
 
 /** Exercises production request signing and command shaping. */
 describe('S3Provider', () => {
+	/** Covers the deletion path used to prune a backup snapshot. */
+	describe('deletePrefix', () => {
+		it.each(['b2', 'custom'] as const)('uses single Backblaze deletes for the %s provider setting', async (providerType) => {
+			const keys = ['backups/backup-old/note.md', 'backups/backup-old/.backup-manifest.json'];
+			const send = jest.fn().mockImplementation(async (command: unknown) => {
+				if (command instanceof DeleteObjectsCommand) {
+					throw new Error('Backblaze rejected the batch POST');
+				}
+				return {};
+			});
+			const provider = new S3Provider(
+				createSettings({ provider: providerType, endpoint: 'https://s3.us-west-004.backblazeb2.com' }),
+				{ send } as unknown as S3Client,
+			);
+			jest.spyOn(provider, 'listObjects').mockResolvedValue(keys.map(key => ({ key, size: 1, lastModified: new Date(), etag: 'etag' })));
+
+			await expect(provider.deletePrefix('backups/backup-old/')).resolves.toBe(keys.length);
+			expect(send.mock.calls.map(([command]) => {
+				expect(command).toBeInstanceOf(DeleteObjectCommand);
+				return (command as DeleteObjectCommand).input.Key;
+			})).toEqual(keys);
+		});
+
+		it.each(['bucket', 'backupPrefix'] as const)('stops before the next group when %s changes during Backblaze deletion', async field => {
+			let release!: () => void;
+			const pending = new Promise<void>(resolve => { release = resolve; });
+			const send = jest.fn().mockReturnValue(pending);
+			const settings = createSettings({ provider: 'b2', endpoint: 'https://s3.us-west-004.backblazeb2.com' });
+			const provider = new S3Provider(settings, { send } as unknown as S3Client);
+			const keys = Array.from({ length: 9 }, (_, index) => `backups/backup-old/${index}.md`);
+
+			const deletion = provider.deleteFiles(keys);
+			expect(send).toHaveBeenCalledTimes(8);
+			// The settings UI mutates the shared object before persistence finishes.
+			settings[field] = 'different-destination';
+			release();
+
+			await expect(deletion).rejects.toThrow('Storage settings changed');
+			expect(send).toHaveBeenCalledTimes(8);
+			expect(send.mock.calls.every(([command]) => (command as DeleteObjectCommand).input.Bucket === 'test-bucket')).toBe(true);
+		});
+
+		it('waits for outstanding Backblaze deletes before reporting a failed key', async () => {
+			let release!: () => void;
+			const pending = new Promise<void>(resolve => { release = resolve; });
+			const send = jest.fn().mockReturnValue(pending).mockRejectedValueOnce(new Error('Access denied'));
+			const provider = new S3Provider(
+				createSettings({ provider: 'b2', endpoint: 'https://s3.us-west-004.backblazeb2.com' }),
+				{ send } as unknown as S3Client,
+			);
+			const keys = Array.from({ length: 9 }, (_, index) => `backups/backup-old/${index}.md`);
+			const settled = jest.fn();
+			const deletion = provider.deleteFiles(keys);
+			void deletion.catch(settled);
+			await new Promise<void>(resolve => setImmediate(resolve));
+			expect(settled).not.toHaveBeenCalled();
+			expect(send).toHaveBeenCalledTimes(8);
+			release();
+			await expect(deletion).rejects.toThrow('Access denied');
+			expect(send).toHaveBeenCalledTimes(8);
+		});
+
+		it.each(['bucket', 'backupPrefix'] as const)('does not delete previously listed keys when %s changes during listing', async field => {
+			const send = jest.fn().mockResolvedValue({});
+			const settings = createSettings();
+			const provider = new S3Provider(settings, { send } as unknown as S3Client);
+			jest.spyOn(provider, 'listObjects').mockImplementation(async () => {
+				settings[field] = 'different-destination';
+				return [{ key: 'backups/backup-old/note.md', size: 1, lastModified: new Date() }];
+			});
+			await expect(provider.deletePrefix('backups/backup-old/')).rejects.toThrow('Storage settings changed');
+			expect(send).not.toHaveBeenCalled();
+		});
+
+		it('reports an incomplete batch when the provider returns per-key errors', async () => {
+			const send = jest.fn().mockResolvedValue({ Errors: [{ Code: 'AccessDenied' }] });
+			const provider = new S3Provider(createSettings(), { send } as unknown as S3Client);
+			jest.spyOn(provider, 'listObjects').mockResolvedValue([
+				{ key: 'backups/backup-old/note.md', size: 1, lastModified: new Date(), etag: 'etag' },
+			]);
+
+			await expect(provider.deletePrefix('backups/backup-old/')).rejects.toThrow('1 of 1 objects');
+			expect(send.mock.calls[0][0]).toBeInstanceOf(DeleteObjectsCommand);
+		});
+	});
+
 	it('signs subsequent requests with a rotated ID or secret on the same provider', async () => {
 		const headers: string[] = [];
 		const request = jest.spyOn(ObsidianHttpHandler.prototype, 'handle').mockImplementation(async (p) => {

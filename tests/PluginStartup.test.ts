@@ -1,13 +1,16 @@
-/** Exercises the plugin startup callback with a delayed encryption unlock. */
-import type { App, PluginManifest } from 'obsidian';
+/** Exercises plugin startup and backup orchestration across module boundaries. */
+import { Notice, type App, type PluginManifest } from 'obsidian';
 import S3SyncBackupPlugin from '../src/main';
 import { BackupScheduler } from '../src/backup/BackupScheduler';
+import { RetentionManager } from '../src/backup/RetentionManager';
+import { SnapshotCreator } from '../src/backup/SnapshotCreator';
 import { EncryptionCoordinator } from '../src/crypto/EncryptionCoordinator';
 import { SyncJournal } from '../src/sync/SyncJournal';
 import { SyncScheduler } from '../src/sync/SyncScheduler';
 
 jest.mock('obsidian', () => ({
 	...jest.requireActual('obsidian'),
+	Notice: jest.fn(),
 	PluginSettingTab: class {},
 }));
 jest.mock('../src/statusbar');
@@ -87,6 +90,39 @@ describe('Encrypted plugin startup', () => {
 			expect(backup).toHaveBeenCalledTimes(1);
 			plugin.resumeStartupJobs();
 			expect(sync).toHaveBeenCalledTimes(1);
+		} finally {
+			plugin.onunload();
+		}
+	});
+});
+
+/** A saved snapshot remains successful if retention cleanup fails. */
+describe('Plugin backup retention', () => {
+	afterEach(() => jest.restoreAllMocks());
+
+	it('records a successful manual backup when retention rejects after the upload', async () => {
+		jest.spyOn(SyncScheduler.prototype, 'triggerSync').mockResolvedValue(null);
+		jest.spyOn(BackupScheduler.prototype, 'start').mockResolvedValue(undefined);
+		jest.spyOn(EncryptionCoordinator.prototype, 'refreshRemoteMode').mockResolvedValue(undefined);
+		const { plugin, layoutReady } = await loadPlugin();
+		const snapshot = {
+			success: true, backupName: 'backup-test', filesBackedUp: 1,
+			totalSize: 10, startedAt: 1, completedAt: 2, errors: [],
+		};
+		jest.spyOn(SnapshotCreator.prototype, 'createSnapshot').mockResolvedValue(snapshot);
+		const retention = jest.spyOn(RetentionManager.prototype, 'applyRetentionPolicy').mockRejectedValue(new Error('Access denied'));
+		const save = jest.spyOn(plugin, 'saveData');
+		try {
+			plugin.settings.retentionEnabled = true;
+			layoutReady();
+			await new Promise<void>(resolve => setImmediate(resolve));
+			await plugin.triggerManualBackup();
+
+			expect(retention).toHaveBeenCalledTimes(1);
+			expect(Notice).toHaveBeenCalledWith('Backup saved. Retention cleanup failed: Access denied', 10000);
+			expect(save).toHaveBeenCalledWith(expect.objectContaining({
+				'obsidian-s3-sync-last-backup': expect.any(Number),
+			}));
 		} finally {
 			plugin.onunload();
 		}

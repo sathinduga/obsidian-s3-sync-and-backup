@@ -216,9 +216,8 @@ describeEachProvider()('Provider compatibility [$name]', (provider: TestProvider
     });
 
     /**
-     * Deletion. Single-object delete has no required checksum; batch delete
-     * (DeleteObjects) is the one operation still checksummed even after the
-     * issue #78 fix, so it is the "decide by test" case for B2 compatibility.
+     * Deletion. Backblaze uses multiple single-object requests because its batch
+     * endpoint rejects Obsidian desktop's transport. Other providers use a batch.
      */
     describe('Delete operations', () => {
         it('deletes a single object', async () => {
@@ -232,7 +231,7 @@ describeEachProvider()('Provider compatibility [$name]', (provider: TestProvider
             expect(objects).toEqual([]);
         });
 
-        it('batch-deletes multiple objects', async () => {
+        it('deletes multiple objects using the provider-specific strategy', async () => {
             const batchPrefix = `${testPrefix}/batch-delete`;
             const keys = [
                 `${batchPrefix}/file1.txt`,
