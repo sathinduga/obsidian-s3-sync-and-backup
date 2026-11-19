@@ -145,7 +145,7 @@ On Obsidian 1.13.0 and later, use Settings search to find plugin options such as
 | Setting | Description |
 | :--- | :--- |
 | **Enable end-to-end encryption** | Encrypt all files with XSalsa20-Poly1305 before uploading to S3. Requires a passphrase (minimum 8 characters). Shows a strength indicator while typing. |
-| **Remember passphrase** | Save the passphrase locally so the vault unlocks automatically on startup. The passphrase is stored in Obsidian's secret storage (not in `data.json`). |
+| **Remember passphrase** | Save the passphrase in Obsidian's Keychain to unlock automatically on startup. If the vault is already unlocked, enter the current passphrase when prompted. |
 | **Unlock** | When the vault is encrypted but locked (e.g., after restarting Obsidian without "Remember passphrase"), enter your passphrase to unlock sync and backup. |
 | **Disable encryption** | Re-upload all files as plaintext and remove the encryption marker. Shows a confirmation dialog. Other devices switch to plaintext mode automatically on next sync. |
 

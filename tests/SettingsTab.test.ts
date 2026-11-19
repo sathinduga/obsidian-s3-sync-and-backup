@@ -63,11 +63,16 @@ function createTab() {
 		retentionEnabled: true,
 		retentionMode: 'copies' as const,
 	};
+	let savedPassphrase = '';
 	const plugin = {
 		settings,
 		saveSettings: jest.fn().mockResolvedValue(undefined),
 		onSettingsChanged: jest.fn(),
 		resumeStartupJobs: jest.fn(),
+		secrets: {
+			getPassphrase: jest.fn(() => savedPassphrase),
+			setPassphrase: jest.fn((value: string) => { savedPassphrase = value; }),
+		},
 		getEncryptionCoordinator: jest.fn(),
 	};
 	const tab = new S3SyncBackupSettingTab(new App(), plugin as unknown as S3SyncBackupPlugin);
@@ -151,6 +156,48 @@ describe('S3 Sync + Backup settings', () => {
 		expect(plugin.saveSettings).not.toHaveBeenCalled();
 		expect(update).toHaveBeenCalledTimes(1);
 	});
+
+	it.each([
+		{ reason: 'verified', input: 'synthetic verified passphrase', valid: true, fail: null },
+		{ reason: 'incorrect', input: 'synthetic incorrect passphrase', valid: false, fail: null },
+		{ reason: 'cancelled', input: null, valid: false, fail: null },
+		{ reason: 'Keychain write failed', input: 'synthetic verified passphrase', valid: true, fail: 'keychain' },
+		{ reason: 'settings save failed', input: 'synthetic verified passphrase', valid: true, fail: 'settings' },
+	])('only enables remember after unlocking with a verified and saved passphrase ($reason)',
+		async ({ input, valid, fail }) => {
+			const { tab, plugin } = createTab();
+			const promptForPassphrase = jest.fn().mockResolvedValue(input);
+			Object.assign(tab, { promptForPassphrase });
+			const verifyCurrentPassphrase = jest.fn().mockResolvedValue(valid);
+			plugin.getEncryptionCoordinator.mockReturnValue({
+				getState: () => ({ remoteMode: 'encrypted', hasKey: true }),
+				verifyCurrentPassphrase,
+			});
+			if (fail === 'keychain') plugin.secrets.setPassphrase.mockImplementationOnce(() => {});
+			if (fail === 'settings') plugin.saveSettings.mockRejectedValueOnce(new Error('Write failed'));
+
+			const form = modernRows(tab).find(({ name }) => name === 'End-to-end encryption');
+			if (!form) throw new Error('Encryption form missing');
+			const { control, setting } = mockSetting();
+			jest.mocked(Setting).mockImplementationOnce(() => setting as unknown as Setting);
+			form.render(mockSetting().setting as unknown as Setting, {} as Parameters<typeof form.render>[1]);
+
+			await control.onChange.mock.calls[0]![0](true);
+
+			const remembered = valid && !fail;
+			expect(promptForPassphrase).toHaveBeenCalledTimes(1);
+			expect(verifyCurrentPassphrase).toHaveBeenCalledTimes(input === null ? 0 : 1);
+			expect(plugin.secrets.getPassphrase()).toBe(remembered ? input : '');
+			expect(plugin.settings.rememberPassphrase).toBe(remembered);
+			expect(control.setValue).toHaveBeenLastCalledWith(remembered);
+			expect(plugin.saveSettings).toHaveBeenCalledTimes(valid && fail !== 'keychain' ? 1 : 0);
+			if (remembered) {
+				expect(plugin.secrets.setPassphrase.mock.invocationCallOrder[0]).toBeLessThan(
+					plugin.saveSettings.mock.invocationCallOrder[0]!,
+				);
+			}
+		},
+	);
 
 	it('renders the available controls with the legacy settings API', () => {
 		const { tab } = createTab();

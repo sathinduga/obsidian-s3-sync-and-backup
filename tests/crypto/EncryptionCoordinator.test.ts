@@ -507,6 +507,33 @@ describe('EncryptionCoordinator', () => {
 		});
 	});
 
+	/** Verifies remembered passphrases against the current key without replacing it. */
+	describe('verifyCurrentPassphrase', () => {
+		it('accepts only the key used by the unlocked session', async () => {
+			await setEncryptedRemoteAndUnlock();
+			currentMarker().verify
+				.mockResolvedValueOnce(derivedKey.slice())
+				.mockResolvedValueOnce(null)
+				.mockResolvedValueOnce(new Uint8Array(derivedKey.length));
+
+			await expect(coordinator.verifyCurrentPassphrase('correct')).resolves.toBe(true);
+			await expect(coordinator.verifyCurrentPassphrase('wrong')).resolves.toBe(false);
+			await expect(coordinator.verifyCurrentPassphrase('another destination')).resolves.toBe(false);
+			expect(mockPayloadCodec.updateKey).toHaveBeenCalledTimes(1);
+		});
+
+		it('rejects a result if the destination changes before settings finish saving', async () => {
+			await setEncryptedRemoteAndUnlock();
+			const pending = createDeferred<Uint8Array | null>();
+			currentMarker().verify.mockReturnValueOnce(pending.promise);
+			const verified = coordinator.verifyCurrentPassphrase('correct');
+			settings.bucket = 'different-bucket';
+			pending.resolve(derivedKey);
+
+			await expect(verified).resolves.toBe(false);
+		});
+	});
+
 	/** Exercises the plaintext-to-encrypted migration path driven from local vault files. */
 	describe('enableEncryption(passphrase, callbacks)', () => {
 		it('returns a validation error when the passphrase is too short', async () => {
