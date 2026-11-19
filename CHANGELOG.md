@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.0.1](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/5.0.0...5.0.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **deps:** patch vulnerable npm dependencies ([#101](https://github.com/sathinduga/obsidian-s3-sync-and-backup/issues/101)) ([da134b4](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/da134b42843fd2b671e505714f319f800d8dd385))
+* **deps:** patch vulnerable XML parser and glob matcher ([6411725](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/641172554322f83602468ba63003f7ec0eceb2ac))
+* **lint:** include project-external files in typed linting ([709d806](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/709d806a2cb2dd781d1a9a08e2064597ea1c6190))
+* **settings:** handle cleared Keychain selections ([5152fbd](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/5152fbdde066eac5e80369fdfff8900db8a1240f))
+
 ## [5.0.0](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.6...5.0.0) (2026-11-19)
 
 
