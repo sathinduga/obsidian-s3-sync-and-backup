@@ -1,5 +1,24 @@
 # Changelog
 
+## [5.0.0](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.6...5.0.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **settings:** Requires Obsidian 1.11.5 or later. Secrets are stored locally on each device. Plugin version 4.2.6 remains available for older Obsidian versions.
+
+### Features
+
+* **settings:** migrate credentials to Obsidian Keychain ([#103](https://github.com/sathinduga/obsidian-s3-sync-and-backup/issues/103)) ([c5b28b4](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/c5b28b46c340c1839a0a045c7af0994b282fae5b))
+* **settings:** store S3 credentials and passphrase in SecretStorage ([f94b8c5](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/f94b8c57b69a9928fe1f8698efcacf126f9bc86d))
+* **settings:** store S3 credentials and passphrase in SecretStorage ([cf4c52d](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/cf4c52db78e43fcaf49cf09721d1be3bd1de8b1f))
+
+
+### Bug Fixes
+
+* **release:** require Obsidian 1.11.5 for Keychain storage ([26460f4](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/26460f45734938171943901ed613960bef886df2))
+* **sync:** preserve startup sync across the Keychain upgrade ([a523b6d](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/a523b6d5de590dfd8d1436324bbd021067bd852b))
+
 ## [4.2.6](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/4.2.5...4.2.6) (2026-11-06)
 
 
