@@ -26,6 +26,7 @@ import { BackupListModal } from './backup/BackupListModal';
 import { getOrCreateDeviceId } from './crypto/VaultMarker';
 import { EncryptionCoordinator } from './crypto/EncryptionCoordinator';
 import { BackupResult } from './types';
+import { SecretVault } from './utils/secrets';
 
 /**
  * S3SyncBackupPlugin — main plugin class.
@@ -34,6 +35,9 @@ import { BackupResult } from './types';
  */
 export default class S3SyncBackupPlugin extends Plugin {
 	settings!: S3SyncBackupSettings;
+
+	/** Access to credentials and the remembered passphrase in Obsidian SecretStorage */
+	secrets!: SecretVault;
 
 	/** S3 provider instance */
 	private s3Provider: S3Provider | null = null;
@@ -80,6 +84,12 @@ export default class S3SyncBackupPlugin extends Plugin {
 	/** Backup in progress flag */
 	private isBackupRunning = false;
 
+	/** Layout and encryption preflight must finish before background jobs start. */
+	private startupCheckComplete = false;
+
+	/** Retain one requested startup sync while the vault is locked. */
+	private startupSyncPending = false;
+
 	/**
 	 * Plugin load lifecycle hook.
 	 * Called when the plugin is enabled.
@@ -94,7 +104,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// S3 provider must be created first — all subsystems (sync engine, backup snapshot
 		// creator, etc.) accept it as a constructor argument. Creating it here once ensures
 		// a single authenticated client is reused across the entire plugin lifecycle.
-		this.s3Provider = new S3Provider(this.settings);
+		this.s3Provider = new S3Provider(
+			this.settings,
+			undefined,
+			() => this.secrets.getCredentials(this.settings),
+		);
 
 		// Status bar
 		this.statusBar = new StatusBar(this);
@@ -232,34 +246,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Commands
 		this.registerCommands();
 
-		// Start sync services (change tracker + sync scheduler) immediately.
-		// Backup scheduler is deferred to onLayoutReady below so that the vault
-		// index is fully populated before the first snapshot runs.
+		// Track changes immediately; defer the schedulers until startup preflight.
 		this.startSyncServices();
 
-		// Everything below is deferred until workspace layout is ready so that
-		// Obsidian has finished restoring open tabs and the vault index is fully
-		// populated. Running these too early (before onLayoutReady) can cause
-		// empty backups (vault.getFiles() returns []) and spurious sync errors.
 		this.app.workspace.onLayoutReady(() => {
-			// Start backup scheduler after vault is indexed so the initial
-			// catch-up backup (if overdue) sees all vault files.
-			if (this.settings.backupEnabled) {
-				void this.backupScheduler?.start();
-			}
-
-			// Check remote encryption state on startup. If the vault is encrypted
-			// (marker exists in S3), auto-enable locally and block sync/backup until
-			// the user provides the passphrase in settings. This handles multi-device
-			// detection: device A enables encryption → device B detects on startup.
-			if (this.s3Provider && this.encryptionCoordinator) {
-				void this.checkEncryptionOnStartup();
-			}
-
-			// Trigger startup sync after vault index is ready.
-			if (this.settings.syncEnabled && this.settings.syncOnStartup) {
-				void this.syncScheduler?.triggerSync('startup');
-			}
+			void this.finishStartup();
 		});
 	}
 
@@ -270,6 +261,8 @@ export default class S3SyncBackupPlugin extends Plugin {
 	onunload(): void {
 		console.debug('Unloading S3 Sync + Backup plugin');
 
+		this.startupCheckComplete = false;
+		this.startupSyncPending = false;
 		this.stopSyncServices();
 
 		if (this.syncJournal) {
@@ -289,10 +282,30 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/**
-	 * Load plugin settings from disk.
+	 * Load plugin settings from disk and migrate legacy plaintext secrets.
+	 *
+	 * Older versions stored `accessKeyId`, `secretAccessKey` and `savedPassphrase` in
+	 * `data.json`; they are moved to SecretStorage and removed from disk here.
 	 */
 	async loadSettings(): Promise<void> {
+		this.secrets = new SecretVault(this.app.secretStorage);
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<S3SyncBackupSettings> | null);
+
+		try {
+			if (this.secrets.migrateLegacySettings(this.settings)) {
+				await this.saveData(this.settings);
+			}
+		} catch {
+			const message = 'Unable to finish migrating credentials. Reload the plugin to retry.';
+			new Notice(message, 10000);
+			throw new Error(message);
+		}
+	}
+
+	/** Test connectivity using the same provider and credentials as sync and backup. */
+	async testConnection(): Promise<string> {
+		if (!this.s3Provider) throw new Error('S3 provider is still initializing');
+		return await this.s3Provider.testConnection();
 	}
 
 	/**
@@ -358,12 +371,44 @@ export default class S3SyncBackupPlugin extends Plugin {
 		this.payloadCodec?.updateKey(key);
 	}
 
+	/** Wait for the vault index, remote encryption check, and remembered unlock before starting jobs. */
+	private async finishStartup(): Promise<void> {
+		const provider = this.s3Provider;
+		if (!provider) return;
+		try {
+			await this.checkEncryptionOnStartup();
+		} catch {
+			if (this.s3Provider === provider) {
+				new Notice('Unable to prepare vault encryption. Reload the plugin to retry.', 10000);
+			}
+			return;
+		}
+
+		if (this.s3Provider !== provider) return;
+		this.startupSyncPending = this.settings.syncEnabled && this.settings.syncOnStartup;
+		this.startupCheckComplete = true;
+		this.startSyncServices();
+		this.resumeStartupJobs();
+	}
+
 	/**
-	 * Check remote encryption state on startup and notify the user if
-	 * the vault is encrypted but no passphrase has been provided yet.
+	 * Resume the requested startup jobs once the encryption coordinator allows them.
+	 * Call after startup preflight or after the user unlocks the vault in settings.
 	 */
+	resumeStartupJobs(): void {
+		if (!this.startupCheckComplete || this.encryptionCoordinator?.shouldBlock()) return;
+		if (this.startupSyncPending && this.settings.syncEnabled && this.settings.syncOnStartup) {
+			this.startupSyncPending = false;
+			void this.syncScheduler?.triggerSync('startup');
+		}
+		if (this.settings.backupEnabled) {
+			void this.backupScheduler?.start();
+		}
+	}
+
+	/** Check the remote marker and attempt to unlock with the remembered passphrase. */
 	private async checkEncryptionOnStartup(): Promise<void> {
-		if (!this.encryptionCoordinator) return;
+		if (!this.encryptionCoordinator || !this.settings.bucket) return;
 
 		await this.encryptionCoordinator.refreshRemoteMode(
 			async () => { await this.saveSettings(); },
@@ -371,21 +416,21 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		const state = this.encryptionCoordinator.getState();
 
-		if (state.remoteMode === 'encrypted' && !state.hasKey) {
+		if (this.encryptionCoordinator.getBlockReason() && state.remoteMode === 'plaintext') {
+			new Notice('Unable to check vault encryption. Check the connection and try syncing again.', 10000);
+		} else if (state.remoteMode === 'encrypted' && !state.hasKey) {
 			// Auto-unlock with saved passphrase if "remember passphrase" is enabled
-			if (this.settings.rememberPassphrase && this.settings.savedPassphrase) {
-				const success = await this.encryptionCoordinator.unlock(this.settings.savedPassphrase);
+			const savedPassphrase = this.settings.rememberPassphrase ? this.secrets.getPassphrase() : '';
+			if (savedPassphrase) {
+				const success = await this.encryptionCoordinator.unlock(savedPassphrase);
 				if (success) {
 					if (this.settings.debugLogging) {
 						console.debug('[S3 Sync] Auto-unlocked vault with saved passphrase');
 					}
 					return;
 				}
-				// Saved passphrase is wrong (changed on another device?) — clear it
-				this.settings.rememberPassphrase = false;
-				this.settings.savedPassphrase = '';
-				await this.saveSettings();
-				new Notice('Saved passphrase is incorrect — enter the current passphrase in settings', 10000);
+				// A failed marker read can also prevent unlock. Keep the remembered value for retry.
+				new Notice('Unable to unlock with the saved passphrase. Unlock the vault in settings to resume sync and backup.', 10000);
 				return;
 			}
 
@@ -453,21 +498,17 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Start all active sync and backup services based on current settings.
 	 *
 	 * Activates the change tracker (vault file watcher) and the periodic sync
-	 * scheduler if auto-sync is enabled. Starts the backup scheduler if backup
-	 * is enabled. Safe to call after `stopSyncServices()` — calling start on an
-	 * already-running scheduler has no effect.
+	 * scheduler after startup preflight if auto-sync is enabled.
 	 */
 	private startSyncServices(): void {
 		if (this.settings.syncEnabled) {
 			this.changeTracker?.startTracking(this.settings.excludePatterns);
 
-			if (this.settings.autoSyncEnabled) {
+			if (this.startupCheckComplete && this.settings.autoSyncEnabled) {
 				this.syncScheduler?.start();
 			}
 		}
 
-		// Backup scheduler is started in onload()'s onLayoutReady callback,
-		// not here, to avoid empty snapshots when vault index isn't populated.
 	}
 
 	/**
@@ -494,9 +535,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 		this.stopSyncServices();
 		this.startSyncServices();
 
-		if (this.settings.backupEnabled) {
-			void this.backupScheduler?.start();
-		}
+		this.resumeStartupJobs();
 	}
 
 	/**
@@ -583,6 +622,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 			new Notice('Sync is disabled. Enable it in settings.');
 			return;
 		}
+		if (!this.startupCheckComplete) {
+			new Notice('Sync is waiting for the startup encryption check');
+			return;
+		}
 
 		// Encryption preflight: refresh remote state and block if needed
 		if (this.encryptionCoordinator) {
@@ -603,6 +646,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		new Notice('Starting sync...');
 		const result = await this.syncScheduler?.triggerSync('manual');
+		if (result) {
+			this.startupSyncPending = false;
+			this.resumeStartupJobs();
+		}
 
 		if (!result) {
 			// triggerSync returns null on unhandled engine throws or when a sync was
@@ -633,6 +680,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 	async triggerManualBackup(): Promise<void> {
 		if (!this.settings.backupEnabled) {
 			new Notice('Backup is disabled. Enable it in settings.');
+			return;
+		}
+		if (!this.startupCheckComplete) {
+			new Notice('Backup is waiting for the startup encryption check');
 			return;
 		}
 
@@ -695,9 +746,9 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 
 		// Block scheduled backups when encryption state prevents safe operation
-		if (this.encryptionCoordinator?.shouldBlock()) {
+		if (!this.startupCheckComplete || this.encryptionCoordinator?.shouldBlock()) {
 			if (this.settings.debugLogging) {
-				console.debug(`[S3 Backup] Skipping - ${this.encryptionCoordinator.getBlockReason()}`);
+				console.debug(`[S3 Backup] Skipping - ${this.encryptionCoordinator?.getBlockReason() ?? 'startup check pending'}`);
 			}
 			return null;
 		}
@@ -835,9 +886,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 			},
 			resumeSchedulers: () => {
 				this.syncScheduler?.resume();
-				if (this.settings.backupEnabled) {
-					void this.backupScheduler?.start();
-				}
+				this.resumeStartupJobs();
 			},
 		};
 	}

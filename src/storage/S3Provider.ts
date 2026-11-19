@@ -38,6 +38,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { PayloadFormat, S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncBackupSettings } from '../types';
 import { buildS3ClientConfig, providerSupportsConditionalWrites, validateConnectionSettings } from './S3Config';
+import type { CredentialsResolver, S3Credentials } from '../utils/secrets';
 
 /**
  * S3Provider class
@@ -47,8 +48,8 @@ import { buildS3ClientConfig, providerSupportsConditionalWrites, validateConnect
  *
  * **Lazy client initialization** — `this.client` starts as `null`. The first
  * call to any operation invokes `getClient()`, which builds the `S3Client`
- * from current settings. Calling `updateSettings()` nullifies `this.client`
- * so the next operation transparently rebuilds it with the new config.
+ * from current settings. A settings change or credential rotation rebuilds
+ * the client before the next operation.
  *
  * **ETag handling** — S3 always returns ETags wrapped in double-quotes
  * (e.g. `"d41d8cd98f00b204e9800998ecf8427e"`). All public methods strip
@@ -67,18 +68,10 @@ import { buildS3ClientConfig, providerSupportsConditionalWrites, validateConnect
  */
 export class S3Provider {
     private client: S3Client | null = null;
+    /** Credential snapshot for a client this provider built. Injected clients own their credentials. */
+    private clientCredentials: S3Credentials | null = null;
     private settings: S3SyncBackupSettings;
 
-    /**
-     * Create a new S3Provider instance.
-     *
-     * The underlying `S3Client` is not created here; it is built lazily on
-     * the first operation so that construction never throws even if settings
-     * are incomplete at the time the plugin loads.
-     *
-     * @param settings - Full plugin settings. Only the connection-related
-     *   fields are used here; sync/backup fields are ignored.
-     */
     /**
      * Create a new S3Provider instance.
      *
@@ -92,8 +85,14 @@ export class S3Provider {
      *   lazy client builder is bypassed entirely. Used by E2E tests to inject
      *   a Node.js-compatible client (with `NodeHttpHandler`) instead of the
      *   Obsidian-specific `ObsidianHttpHandler`.
+     * @param resolveCredentials - Returns the S3 credentials from SecretStorage.
+     *   Defaults to empty credentials for non-injected clients.
      */
-    constructor(settings: S3SyncBackupSettings, client?: S3Client) {
+    constructor(
+        settings: S3SyncBackupSettings,
+        client?: S3Client,
+        private readonly resolveCredentials: CredentialsResolver = () => ({ accessKeyId: '', secretAccessKey: '' }),
+    ) {
         this.settings = settings;
         this.client = client ?? null;
     }
@@ -108,20 +107,27 @@ export class S3Provider {
      */
     updateSettings(settings: S3SyncBackupSettings): void {
         this.settings = settings;
-        this.client = null; // Force client recreation on next use
+        this.destroy();
     }
 
     /**
-     * Return the cached `S3Client`, building it from current settings on first
-     * call or whenever `this.client` has been nullified by `updateSettings`.
+     * Return a client configured with the currently resolved credentials. The SDK
+     * caches credentials for the life of a client, so rotation replaces the client.
      *
      * @returns A ready-to-use `S3Client` configured for the active provider.
      */
-    private getClient(): S3Client {
-        if (!this.client) {
-            const config = buildS3ClientConfig(this.settings);
-            this.client = new S3Client(config);
+    private getClient(credentials?: S3Credentials): S3Client {
+        if (this.client && !this.clientCredentials) return this.client;
+
+        const current = credentials ?? this.resolveCredentials();
+        if (this.client && this.clientCredentials?.accessKeyId === current.accessKeyId &&
+            this.clientCredentials.secretAccessKey === current.secretAccessKey) {
+            return this.client;
         }
+
+        this.destroy();
+        this.clientCredentials = { ...current };
+        this.client = new S3Client(buildS3ClientConfig(this.settings, this.clientCredentials));
         return this.client;
     }
 
@@ -143,13 +149,16 @@ export class S3Provider {
      */
     async testConnection(): Promise<string> {
         // Validate settings first
-        const errors = validateConnectionSettings(this.settings);
+        const credentials = this.client && !this.clientCredentials
+            ? await this.client.config.credentials()
+            : this.resolveCredentials();
+        const errors = validateConnectionSettings(this.settings, credentials);
         if (errors.length > 0) {
             throw new Error(`Configuration errors: ${errors.join(', ')}`);
         }
 
         try {
-            const client = this.getClient();
+            const client = this.getClient(credentials);
 
             // HeadBucket checks if bucket exists and we have access
             await client.send(new HeadBucketCommand({
@@ -785,8 +794,8 @@ export class S3Provider {
             }));
             return true;
         } catch (error) {
-            const err = error as Error & { name?: string };
-            if (err.name === 'NoSuchKey' || err.name === 'NotFound' || err.name === 'NotFound') {
+            const err = error as Error & { $metadata?: { httpStatusCode?: number } };
+            if (err.name === 'NoSuchKey' || err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
                 return false;
             }
             throw error;
@@ -895,6 +904,7 @@ export class S3Provider {
      * multiple times — subsequent calls are a no-op.
      */
     destroy(): void {
+        this.clientCredentials = null;
         if (this.client) {
             this.client.destroy();
             this.client = null;

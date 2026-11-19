@@ -75,9 +75,10 @@ export type RetentionMode = 'days' | 'copies';
 /**
  * Complete plugin settings interface.
  *
- * When `rememberPassphrase` is enabled, the raw passphrase is stored in `data.json`.
- * The plugin's own settings directory is hardcoded-excluded from sync to prevent
- * passphrase leakage to S3.
+ * Secrets (S3 access key ID, secret access key, remembered passphrase) are never
+ * persisted in `data.json`. They live in Obsidian's SecretStorage; settings only hold
+ * the *names* of the S3 key secrets, while the passphrase uses a fixed secret ID
+ * (see `src/utils/secrets.ts`).
  */
 export interface S3SyncBackupSettings {
 	// Connection
@@ -85,18 +86,17 @@ export interface S3SyncBackupSettings {
 	endpoint: string;
 	region: string;
 	bucket: string;
-	accessKeyId: string;
-	secretAccessKey: string;
+	/** Name (SecretStorage ID) of the secret holding the S3 access key ID. */
+	accessKeyIdSecret: string;
+	/** Name (SecretStorage ID) of the secret holding the S3 secret access key. */
+	secretAccessKeySecret: string;
 	forcePathStyle: boolean;
 
 	// Encryption
 	encryptionEnabled: boolean;
-	/** When true, the passphrase is persisted in plugin settings (data.json) so the
-	 *  vault auto-unlocks on startup without user interaction. */
+	/** When true, the passphrase is kept in SecretStorage so the vault auto-unlocks
+	 *  on startup without user interaction. */
 	rememberPassphrase: boolean;
-	/** The raw passphrase string, saved only when `rememberPassphrase` is true.
-	 *  Stored in Obsidian's `data.json` which is excluded from sync by a hardcoded rule. */
-	savedPassphrase: string;
 
 	// Sync
 	syncEnabled: boolean;
@@ -127,13 +127,12 @@ export const DEFAULT_SETTINGS: S3SyncBackupSettings = {
 	endpoint: '',
 	region: 'us-east-1',
 	bucket: '',
-	accessKeyId: '',
-	secretAccessKey: '',
+	accessKeyIdSecret: '',
+	secretAccessKeySecret: '',
 	forcePathStyle: false,
 
 	encryptionEnabled: false,
 	rememberPassphrase: false,
-	savedPassphrase: '',
 
 	syncEnabled: true,
 	syncPrefix: 'vault',

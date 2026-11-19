@@ -318,7 +318,7 @@ const PLUGIN_ID = 'simple-storage-sync-and-backup';
  * Check whether a vault-relative path falls inside this plugin's own settings directory.
  *
  * This is a hardcoded, non-overridable exclusion to prevent the plugin from syncing
- * its own `data.json` (which may contain a saved passphrase) or any other plugin
+ * its own `data.json` or any other plugin
  * artefact (`main.js`, `manifest.json`, `styles.css`) to S3.
  *
  * @param path      - The vault-relative file path to test.

@@ -265,7 +265,7 @@ Automated via **[release-please](https://github.com/googleapis/release-please)**
 3.  `release-please` creates a **Release PR** with bumped version and CHANGELOG.
 4.  Merge the Release PR → GitHub Release + asset upload (`main.js`, `manifest.json`, `styles.css`).
 
-**Manual step (rare):** Update `versions.json` only when `minAppVersion` changes in `manifest.json`. Helper: `node scripts/version.mjs <version>`
+**Manual step when the minimum changes.** Add the last release that supports the previous Obsidian minimum to `versions.json`. In the Release Please PR, run `node scripts/version.mjs <release-version>` to record the new minimum against the actual release version. The Keychain migration keeps 4.2.6 as the fallback for Obsidian 1.8.7 through 1.11.4.
 
 ---
 

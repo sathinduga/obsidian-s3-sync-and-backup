@@ -3,6 +3,8 @@
  */
 
 import { HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { HttpResponse } from '@smithy/protocol-http';
+import { ObsidianHttpHandler } from '../../src/storage/ObsidianHttpHandler';
 import { S3Provider } from '../../src/storage/S3Provider';
 import { S3SyncBackupSettings } from '../../src/types';
 
@@ -12,8 +14,8 @@ function createSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3SyncBa
 		endpoint: '',
 		region: 'us-east-1',
 		bucket: 'test-bucket',
-		accessKeyId: 'test-key',
-		secretAccessKey: 'test-secret',
+		accessKeyIdSecret: 'test-key',
+		secretAccessKeySecret: 'test-secret',
 		forcePathStyle: false,
 		encryptionEnabled: false,
 		syncEnabled: true,
@@ -34,7 +36,37 @@ function createSettings(overrides: Partial<S3SyncBackupSettings> = {}): S3SyncBa
 	};
 }
 
+/** Exercises production request signing and command shaping. */
 describe('S3Provider', () => {
+	it('signs subsequent requests with a rotated ID or secret on the same provider', async () => {
+		const headers: string[] = [];
+		const request = jest.spyOn(ObsidianHttpHandler.prototype, 'handle').mockImplementation(async (p) => {
+			headers.push(p.headers.authorization ?? '');
+			return { response: new HttpResponse({ statusCode: 200 }) };
+		});
+		const credentials = { accessKeyId: 'original-id', secretAccessKey: 'original-secret' };
+		const provider = new S3Provider(createSettings(), undefined, () => credentials);
+
+		try {
+			await provider.fileExists('vault/probe.md');
+			credentials.accessKeyId = 'rotated-id';
+			await provider.fileExists('vault/probe.md');
+			expect(headers[0]).toContain('Credential=original-id/');
+			expect(headers[1]).toContain('Credential=rotated-id/');
+
+			const now = new Date();
+			jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(now);
+			await provider.fileExists('vault/probe.md');
+			credentials.secretAccessKey = 'rotated-secret';
+			await provider.fileExists('vault/probe.md');
+			expect(headers[3]).toContain('Credential=rotated-id/');
+			expect(headers[3]).not.toBe(headers[2]);
+		} finally {
+			jest.useRealTimers();
+			request.mockRestore();
+			provider.destroy();
+		}
+	});
 	it('quotes If-Match ETags for conditional uploads', async () => {
 		const provider = new S3Provider(createSettings());
 		const send = jest.fn().mockResolvedValue({ ETag: '"returned-etag"' });

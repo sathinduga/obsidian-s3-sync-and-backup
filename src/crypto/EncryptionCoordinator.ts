@@ -56,6 +56,8 @@ export interface EncryptionCoordinatorCallbacks {
 export class EncryptionCoordinator {
 	private encryptionKey: Uint8Array | null = null;
 	private remoteMode: RemoteEncryptionMode = 'plaintext';
+	/** A failed marker read leaves the remote format unverified until a successful retry. */
+	private remoteCheckFailed = false;
 	private isBusy = false;
 	private vaultMarker: VaultMarker;
 	private syncLease: SyncLease;
@@ -87,18 +89,16 @@ export class EncryptionCoordinator {
 	 *
 	 * Returns true when:
 	 * - A migration is in progress locally
-	 * - The remote marker is in transitioning state (migration on another device)
+	 * - The remote marker could not be read or is in a transitioning state
 	 * - Encryption is enabled remotely but no key is loaded
 	 */
 	shouldBlock(): boolean {
-		if (this.isBusy) return true;
-		if (this.remoteMode === 'transitioning') return true;
-		if (this.remoteMode === 'encrypted' && this.encryptionKey === null) return true;
-		return false;
+		return this.getBlockReason() !== null;
 	}
 
 	getBlockReason(): string | null {
 		if (this.isBusy) return 'Encryption migration in progress';
+		if (this.remoteCheckFailed) return 'Unable to verify the remote vault encryption state';
 		if (this.remoteMode === 'transitioning') return 'Encryption state transition in progress on another device';
 		if (this.remoteMode === 'encrypted' && this.encryptionKey === null) {
 			return 'Vault is encrypted — enter passphrase in settings to unlock';
@@ -109,7 +109,7 @@ export class EncryptionCoordinator {
 	/**
 	 * Check the remote vault marker and update local state accordingly.
 	 *
-	 * Called on plugin startup and before every sync/backup operation.
+	 * Called on plugin startup and before manual sync.
 	 * If the remote marker indicates encryption but the local setting disagrees,
 	 * the local setting is auto-aligned (multi-device detection).
 	 */
@@ -123,15 +123,11 @@ export class EncryptionCoordinator {
 					this.settings.encryptionEnabled = false;
 					await saveSettings();
 				}
+				this.remoteCheckFailed = false;
 				return;
 			}
 
 			const metadata = await this.vaultMarker.getMetadata();
-			if (!metadata) {
-				this.remoteMode = 'plaintext';
-				return;
-			}
-
 			if (metadata.state === 'transitioning') {
 				this.remoteMode = 'transitioning';
 			} else {
@@ -142,7 +138,9 @@ export class EncryptionCoordinator {
 				this.settings.encryptionEnabled = true;
 				await saveSettings();
 			}
+			this.remoteCheckFailed = false;
 		} catch (error) {
+			this.remoteCheckFailed = true;
 			console.error('[Encryption] Failed to refresh remote mode:', error);
 		}
 	}
