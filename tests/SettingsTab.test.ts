@@ -31,7 +31,11 @@ function mockSetting() {
 		setDesc: jest.fn().mockReturnThis(),
 		setHeading: jest.fn().mockReturnThis(),
 		setClass: jest.fn().mockReturnThis(),
-		settingEl: { empty: jest.fn(), createEl: jest.fn(() => ({ createEl: jest.fn() })) },
+		settingEl: {
+			empty: jest.fn(),
+			createEl: jest.fn(() => ({ createEl: jest.fn() })),
+			createDiv: jest.fn(() => ({ createEl: jest.fn() })),
+		},
 		addToggle: jest.fn(),
 		addText: jest.fn(),
 		addDropdown: jest.fn(),
