@@ -125,6 +125,8 @@ The plugin is a sync and backup tool, so by design it enumerates every file in y
 
 ## Settings Reference
 
+On Obsidian 1.13.0 and later, use Settings search to find plugin options such as sync on startup, retention copies, or the encryption passphrase controls.
+
 ### Connection
 
 | Setting | Description |
