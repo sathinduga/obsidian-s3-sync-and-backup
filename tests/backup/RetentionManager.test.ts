@@ -95,6 +95,20 @@ describe('RetentionManager', () => {
             expect(mockProvider.deletePrefix).toHaveBeenCalledWith('backups/backup-newer/');
         });
 
+        it('does not prune the cached prefix while a prefix edit is waiting to be saved', async () => {
+            const mockProvider = createMockS3Provider();
+            const settings = createTestSettings({ retentionEnabled: true, retentionMode: 'copies', retentionCopies: 1 });
+            const manager = new RetentionManager(mockProvider as never, settings);
+            jest.spyOn(manager, 'listBackups').mockResolvedValue([
+                createBackupInfo('backup-newer', '2024-01-02T10:00:00Z'),
+                createBackupInfo('backup-older', '2024-01-01T10:00:00Z'),
+            ]);
+            settings.backupPrefix = 'other-prefix';
+
+            await expect(manager.applyRetentionPolicy()).rejects.toThrow('Backup prefix changed');
+            expect(mockProvider.deletePrefix).not.toHaveBeenCalled();
+        });
+
         /**
          * Should delete oldest backups exceeding retentionCopies limit
          */

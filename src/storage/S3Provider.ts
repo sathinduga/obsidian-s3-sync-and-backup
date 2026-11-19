@@ -38,6 +38,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { PayloadFormat, S3DownloadResult, S3HeadResult, S3ObjectInfo, S3SyncBackupSettings } from '../types';
 import { buildS3ClientConfig, providerSupportsConditionalWrites, validateConnectionSettings } from './S3Config';
+import { normalizePrefix } from '../utils/paths';
 import type { CredentialsResolver, S3Credentials } from '../utils/secrets';
 
 /**
@@ -916,14 +917,18 @@ export class S3Provider {
 
     /**
      * Capture the current S3 destination before asynchronous deletion work.
-     * @returns A check that throws if the bucket or client changed. Client identity
-     * also detects endpoint changes and rotation to another set of credentials.
+     * @returns A check that throws if the bucket, backup prefix, or client changed.
+     * The prefix is read from shared settings so edits take effect before the
+     * async save refreshes the client. Client identity also detects key rotation.
      */
     guardDeletionDestination(): () => void {
         const bucket = this.settings.bucket;
+        const prefix = normalizePrefix(this.settings.backupPrefix);
         const client = this.getClient();
         return () => {
-            if (bucket !== this.settings.bucket || client !== this.getClient()) {
+            if (bucket !== this.settings.bucket ||
+                prefix !== normalizePrefix(this.settings.backupPrefix) ||
+                client !== this.getClient()) {
                 throw new Error('Storage settings changed during cleanup. Try again.');
             }
         };

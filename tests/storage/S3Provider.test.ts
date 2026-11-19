@@ -61,7 +61,7 @@ describe('S3Provider', () => {
 			})).toEqual(keys);
 		});
 
-		it('stops before the next group when the bucket changes during Backblaze deletion', async () => {
+		it.each(['bucket', 'backupPrefix'] as const)('stops before the next group when %s changes during Backblaze deletion', async field => {
 			let release!: () => void;
 			const pending = new Promise<void>(resolve => { release = resolve; });
 			const send = jest.fn().mockReturnValue(pending);
@@ -71,7 +71,8 @@ describe('S3Provider', () => {
 
 			const deletion = provider.deleteFiles(keys);
 			expect(send).toHaveBeenCalledTimes(8);
-			settings.bucket = 'different-bucket';
+			// The settings UI mutates the shared object before persistence finishes.
+			settings[field] = 'different-destination';
 			release();
 
 			await expect(deletion).rejects.toThrow('Storage settings changed');
@@ -99,12 +100,12 @@ describe('S3Provider', () => {
 			expect(send).toHaveBeenCalledTimes(8);
 		});
 
-		it('does not delete previously listed keys when the bucket changes during listing', async () => {
-			const send = jest.fn();
+		it.each(['bucket', 'backupPrefix'] as const)('does not delete previously listed keys when %s changes during listing', async field => {
+			const send = jest.fn().mockResolvedValue({});
 			const settings = createSettings();
 			const provider = new S3Provider(settings, { send } as unknown as S3Client);
 			jest.spyOn(provider, 'listObjects').mockImplementation(async () => {
-				settings.bucket = 'different-bucket';
+				settings[field] = 'different-destination';
 				return [{ key: 'backups/backup-old/note.md', size: 1, lastModified: new Date() }];
 			});
 			await expect(provider.deletePrefix('backups/backup-old/')).rejects.toThrow('Storage settings changed');

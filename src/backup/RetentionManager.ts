@@ -123,7 +123,7 @@ export class RetentionManager {
 
         // Delete excess backups
         for (const backup of toDelete) {
-            if (prefix !== this.normalizedBackupPrefix) {
+            if (prefix !== normalizePrefix(this.settings.backupPrefix)) {
                 throw new Error('Backup prefix changed during cleanup. Try again.');
             }
             assertSameDestination();
