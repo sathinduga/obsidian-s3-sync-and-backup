@@ -454,6 +454,40 @@ describe('SyncPlanner', () => {
 	});
 
 	describe('discoverState', () => {
+
+		it.each(['.obsidian', '.obsidian-mobile'])('ignores %s in local files, S3 objects and journal state', async (configDir) => {
+			vault.configDir = configDir;
+			planner = createPlanner({ excludePatterns: [] });
+			addVaultFile('Notes/Keep.md');
+			addVaultFile(`${configDir}/hotkeys.json`);
+			addVaultFile(`${configDir}/LOCAL_app.json`);
+			s3Provider.listObjects.mockResolvedValue([
+				createRemoteObject({ key: `vault/${configDir}/plugins/other-plugin/data.json` }),
+			]);
+			journal.getAllStateRecords.mockResolvedValue([createStateRecord({ path: `${configDir}/appearance.json` })]);
+			journal.getAllConflicts.mockResolvedValue([createConflictRecord({ path: `${configDir}/workspace.json` })]);
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+
+			expect([...contexts.keys()]).toEqual(['Notes/Keep.md']);
+		});
+
+		it('filters vault-relative file paths, folder globs and extension globs on both sides', async () => {
+			planner = createPlanner({ excludePatterns: ['Private/Journal.md', 'Archive/**', '*.canvas', '**/*.canvas'] });
+			const excluded = ['Private/Journal.md', 'Archive/2026/Note.md', 'Board.canvas', 'Notes/Board.canvas'];
+			const kept = ['Private/Keep.md', 'Archived/Keep.md', 'Notes/Board.md'];
+			for (const path of [...excluded, ...kept]) addVaultFile(path);
+			s3Provider.listObjects.mockResolvedValue(
+				[...excluded, ...kept].map(path => createRemoteObject({ key: `vault/${path}` })),
+			);
+
+			const contexts = await getPlannerPrivate(planner).discoverState();
+
+			expect([...contexts.keys()]).toEqual(kept);
+			for (const path of kept) {
+				expect(contexts.get(path)).toMatchObject({ local: { file: { path } }, remote: { objectInfo: { key: `vault/${path}` } } });
+			}
+		});
 		it('excludes conflict artifacts from locals, excludes metadata remotes, and attaches journal state', async () => {
 			addVaultFile('dir/note.md');
 			addVaultFile('dir/LOCAL_note.md');

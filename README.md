@@ -13,7 +13,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 - **Bi-directional Sync** — Three-way reconciliation keeps your vault synchronized across devices via S3. Per-file SHA-256 baselines stored locally in IndexedDB detect changes accurately — no cloud manifest required.
 - **S3-Compatible Storage** — Works with AWS S3, Cloudflare R2, Backblaze B2, RustFS, and any other S3-compatible endpoint.
 - **End-to-End Encryption** — Optional XSalsa20-Poly1305 encryption with Argon2id key derivation. Encrypts both synced files and backup snapshots. Passphrase can be remembered for auto-unlock on startup.
-- **Scheduled Backups** — Full vault snapshot backups with configurable intervals (hourly to weekly). Download any backup as a ZIP from settings.
+- **Scheduled Backups** — Snapshots of in-scope vault files with configurable intervals (hourly to weekly). Download any backup as a ZIP from settings.
 - **Smart Conflict Resolution** — When the same file changes on two devices while offline, the plugin creates `LOCAL_` and `REMOTE_` copies so you never lose data.
 - **Status Bar Integration** — Real-time sync and backup status at a glance, with clickable actions.
 - **Flexible Retention** — Automatically clean up old backups by age (days) or number of copies.
@@ -84,14 +84,14 @@ When encryption is enabled:
 
 ## Permissions and data access
 
-The plugin is a sync and backup tool, so by design it enumerates every file in your vault and then reads / uploads / downloads the files inside your configured sync and backup scope.  This section spells out exactly what each piece of the plugin touches so you can make an informed decision before enabling it.
+The plugin uses Obsidian’s vault index to discover local files for sync and backup. You can narrow that scope in **Settings → Advanced → Exclude patterns**.
 
 ### What the plugin reads
 
 | API | Why the plugin uses it |
 | :--- | :--- |
-| `vault.getFiles()` | Enumerates every file in the vault during sync planning and during backup snapshots. Without this the plugin cannot know what to sync or back up. |
-| `vault.read()` / `vault.readBinary()` | Reads file content so it can be uploaded to S3. Triggered only for files inside the sync/backup scope (every vault file minus your *Exclude patterns* minus the plugin's own settings directory). |
+| `vault.getFiles()` | Lists the files in Obsidian’s vault index during sync planning and backup snapshots. The index omits files in hidden folders. |
+| `vault.read()` / `vault.readBinary()` | Reads the content of indexed files in scope so it can be uploaded to S3. |
 | `vault.on('create' / 'modify' / 'delete' / 'rename')` | Tracks which files changed since the last sync so the next cycle only re-checks dirty paths. |
 | Bulk re-read on encryption toggle | When you enable, disable, or rotate the passphrase, the plugin reads every in-scope vault file and re-uploads it in the new payload format. |
 
@@ -100,12 +100,12 @@ The plugin is a sync and backup tool, so by design it enumerates every file in y
 | Destination | What ends up there |
 | :--- | :--- |
 | **S3** (under your configured **sync prefix**, default `vault`) | A copy of every vault file inside the sync scope. File payloads are end-to-end encrypted when *Enable encryption* is on; plain otherwise. |
-| **S3** (under your configured **backup prefix**, default `backups`) | Timestamped full-vault snapshots. **File payloads** are encrypted when encryption is enabled; the per-snapshot `.backup-manifest.json` is **always plaintext** so the plugin can list and inspect backups without the passphrase (it contains file paths, sizes, SHA-256 checksums, the encryption flag, and the originating device ID). |
+| **S3** (under your configured **backup prefix**, default `backups`) | Timestamped snapshots of in-scope vault files. **File payloads** are encrypted when encryption is enabled; the per-snapshot `.backup-manifest.json` is **always plaintext** so the plugin can list and inspect backups without the passphrase (it contains file paths, sizes, SHA-256 checksums, the encryption flag, and the originating device ID). |
 | **Local vault** (`vault.create` / `vault.modify` / `vault.createBinary` / `vault.modifyBinary` / `vault.rename` / `vault.createFolder`) | Files downloaded from S3 on the receiving end of a sync, plus `LOCAL_*` / `REMOTE_*` conflict artifacts when a file diverged on two devices.  Parent folders are auto-created top-down as needed; the rename API is used to stage `LOCAL_*` conflict copies. |
 | **Local vault trash** (via `fileManager.trashFile`) | Files that were deleted on another device and propagated by sync. Honours **Obsidian's** *Files and Links → Deleted files* preference (system trash vs. `.trash/` folder vs. permanent). |
 | **IndexedDB** (database `obsidian-s3-sync-journal-{vaultName}`) | Per-file sync baselines (path, hash, size, mtime, ETag) used for three-way reconciliation, plus a destination fingerprint that detects when you reconnect to a different bucket/prefix. Vault-scoped so two vaults on the same device never share state. |
 | **Obsidian vault-scoped storage** (key `s3-sync-device-id`) | A randomly generated per-vault device identifier. The same ID is written into every uploaded S3 object's `obsidian-device-id` custom metadata for last-writer attribution, and into the `deviceId` field of every backup manifest. |
-| **`data.json`** (Obsidian plugin settings) | All plugin settings (secret names for the S3 credentials, sync/backup toggles, exclude patterns) plus the last-completed backup timestamp used by the scheduler. Secret values are never written here. The plugin's own settings directory is hardcoded-excluded from sync so this file never leaves your device. |
+| **`data.json`** (Obsidian plugin settings) | All plugin settings (secret names for the S3 credentials, sync/backup toggles, exclude patterns) plus the last-completed backup timestamp used by the scheduler. Secret values are never written here. The vault configuration folder stays local, including this file. |
 
 ### What is sent off your device
 
@@ -119,7 +119,7 @@ The plugin is a sync and backup tool, so by design it enumerates every file in y
 - It does not touch files outside the configured vault.
 - It does not contact any host other than the S3 endpoint you configure.
 
-> **Important — Obsidian config files are in scope by default.** Only the plugin's own settings directory (`.obsidian/plugins/simple-storage-sync-and-backup/`) is hard-excluded.  Other files under `.obsidian/` (workspace layout, hotkeys, third-party plugin settings, etc.) are vault files from Obsidian's point of view and are enumerated and synced unless you add them to *Exclude patterns* in settings.  If you do not want those propagated across devices, add patterns such as `.obsidian/workspace*`, `.obsidian/hotkeys.json`, `.obsidian/plugins/**`, etc.  The defaults (`**/workspace*`, `.trash/**`) cover the workspace layout but not other config files.
+The vault configuration folder, usually `.obsidian/`, stays local and is outside sync and backup. This also applies when you override the folder in Obsidian. Workspace layouts, enabled plugins and plugin settings can differ across devices. Keeping them local prevents one device’s settings from replacing another’s. [Obsidian Vault API](https://docs.obsidian.md/Plugins/Vault) · [Configuration folders](https://obsidian.md/help/configuration-folder)
 
 ---
 
@@ -178,8 +178,18 @@ On Obsidian 1.13.0 and later, use Settings search to find plugin options such as
 | Setting | Description | Default |
 | :--- | :--- | :--- |
 | **Debug logging** | Enable verbose console logging for troubleshooting. | Off |
-| **Exclude patterns** | Comma-separated glob patterns for files/folders to exclude from sync (e.g., `workspace*, .trash/*`). The plugin's own settings directory is always excluded regardless of this setting. | `**/workspace*, .trash/**` |
+| **Exclude patterns** | Comma-separated vault-relative file paths and glob patterns to skip during sync and backup. | `**/workspace*, .trash/**` |
 | **Reset to defaults** | Reset all settings to defaults, preserving S3 connection credentials. Shows a confirmation dialog. |  |
+
+#### Exclude files from sync and backup
+
+Enter vault-relative paths in **Settings → Advanced → Exclude patterns**. Use forward slashes and separate entries with commas.
+
+- `Private/Journal.md` skips one note.
+- `Archive/**` skips the contents of `Archive`, including subfolders.
+- `*.canvas, **/*.canvas` skips Canvas files at the vault root and in subfolders.
+
+Matching files are skipped during sync in both directions and in future snapshots. Adding a pattern leaves existing S3 objects and snapshots in place.
 
 ---
 
@@ -230,11 +240,9 @@ your-bucket/
 └── backups/                            # SNAPSHOTS (read-only)
     ├── backup-2024-12-25T14-30-00/
     │   ├── .backup-manifest.json       # Plain JSON: file count, checksums, encrypted flag
-    │   └── ... (full vault copy)
+    │   └── ... (in-scope vault files)
     └── backup-2024-12-24T14-30-00/
 ```
-
-> **Note:** The plugin's own settings directory (`.obsidian/plugins/simple-storage-sync-and-backup/`) is never uploaded to S3, regardless of exclude pattern configuration.
 
 ---
 
@@ -296,8 +304,8 @@ Yes, but existing files under the old prefix won't be moved. The plugin will tre
 </details>
 
 <details>
-<summary><strong>What files are excluded from sync?</strong></summary>
-By default, <code>**/workspace*</code> and <code>.trash/**</code> are excluded. You can customize this in <strong>Settings → Advanced → Exclude patterns</strong>. The plugin's own settings directory (<code>.obsidian/plugins/simple-storage-sync-and-backup/</code>) is always excluded and cannot be overridden.
+<summary><strong>What files are excluded from sync and backup?</strong></summary>
+The vault configuration folder stays local. The default exclude patterns are <code>**/workspace*</code> and <code>.trash/**</code>. For other vault files, see <a href="#exclude-files-from-sync-and-backup">the exclude pattern examples</a>.
 </details>
 
 ---

@@ -38,7 +38,7 @@ import {
 	SyncUploadMetadata,
 } from '../types';
 import { encodeMetadata } from '../sync/SyncObjectMetadata';
-import { matchesAnyGlob, isPluginOwnPath } from '../utils/paths';
+import { matchesAnyGlob, isVaultConfigPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 
 /**
@@ -321,7 +321,7 @@ export class EncryptionCoordinator {
 
 		for (const file of vaultFiles) {
 			if (matchesAnyGlob(file.path, this.settings.excludePatterns)
-				|| isPluginOwnPath(file.path, this.app.vault.configDir)) {
+				|| isVaultConfigPath(file.path, this.app.vault.configDir)) {
 				skipped++;
 				continue;
 			}

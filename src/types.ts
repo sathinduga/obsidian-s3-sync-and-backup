@@ -115,6 +115,7 @@ export interface S3SyncBackupSettings {
 	retentionCopies: number;
 
 	// Advanced
+	/** Vault-relative paths or globs to skip in sync and backups. */
 	excludePatterns: string[];
 	debugLogging: boolean;
 }
