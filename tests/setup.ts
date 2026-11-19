@@ -30,9 +30,7 @@ if (typeof (global as { window?: unknown }).window === 'undefined') {
 
 // Polyfill `activeDocument`. Obsidian exposes this global to make code work
 // across the main window and popout windows; in the renderer it points at
-// whichever document currently has focus. In tests we proxy it to the
-// current `document` so existing per-test `document` mocks (see
-// BackupDownloader.test.ts) automatically satisfy `activeDocument` reads.
+// whichever document currently has focus. Default to the test document unless a test simulates a focused popout.
 Object.defineProperty(global, 'activeDocument', {
     configurable: true,
     get: () => (global as { document?: Document }).document,

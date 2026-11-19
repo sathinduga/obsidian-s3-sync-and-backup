@@ -310,34 +310,22 @@ describe('BackupDownloader', () => {
 	 * Covers browser download triggering behavior.
 	 */
 	describe('triggerDownload', () => {
-		it('creates a temporary anchor element, clicks it, and revokes the object URL', async () => {
+		it('creates and removes the download link in the focused document', async () => {
 			const s3Provider = createMockS3Provider();
 			const downloader = new BackupDownloader(s3Provider as unknown as S3Provider, createTestSettings());
 			const blob = new Blob(['zip-content'], { type: 'application/zip' });
 			jest.spyOn(downloader, 'createDownloadBlob').mockResolvedValue(blob);
 
-			const link = {
-				href: '',
-				download: '',
-				click: jest.fn(),
-			} as unknown as HTMLAnchorElement;
-			const appendChildSpy = jest.fn((node: Node) => node);
-			const removeChildSpy = jest.fn((node: Node) => node);
-			const createElementSpy = jest.fn((tagName: string) => {
-				if (tagName !== 'a') {
-					throw new Error(`Unexpected tag: ${tagName}`);
-				}
-
-				return link;
-			});
-			const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
-			Object.defineProperty(globalThis, 'document', {
+			const link = { click: jest.fn() };
+			const removeChildSpy = jest.fn();
+			const createAnchorSpy = jest.fn(() => link);
+			const activeDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'activeDocument');
+			Object.defineProperty(globalThis, 'activeDocument', {
 				configurable: true,
 				writable: true,
 				value: {
-					createElement: createElementSpy,
 					body: {
-						appendChild: appendChildSpy,
+						createEl: createAnchorSpy,
 						removeChild: removeChildSpy,
 					},
 				} as unknown as Document,
@@ -361,10 +349,9 @@ describe('BackupDownloader', () => {
 			try {
 				await downloader.triggerDownload('backup-1');
 
-				expect(createElementSpy).toHaveBeenCalledWith('a');
-				expect(appendChildSpy).toHaveBeenCalledWith(link);
-				expect(link.href).toBe('blob:backup-1');
-				expect(link.download).toBe('backup-1.zip');
+				expect(createAnchorSpy).toHaveBeenCalledWith('a', {
+					attr: { href: 'blob:backup-1', download: 'backup-1.zip' },
+				});
 				expect(link.click).toHaveBeenCalledTimes(1);
 				expect(removeChildSpy).toHaveBeenCalledWith(link);
 				expect(createObjectURLMock).toHaveBeenCalledWith(blob);
@@ -381,10 +368,10 @@ describe('BackupDownloader', () => {
 					value: originalRevokeObjectURL,
 				});
 
-				if (originalDocumentDescriptor) {
-					Object.defineProperty(globalThis, 'document', originalDocumentDescriptor);
+				if (activeDocumentDescriptor) {
+					Object.defineProperty(globalThis, 'activeDocument', activeDocumentDescriptor);
 				} else {
-					Reflect.deleteProperty(globalThis, 'document');
+					Reflect.deleteProperty(globalThis, 'activeDocument');
 				}
 			}
 		});

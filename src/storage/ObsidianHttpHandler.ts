@@ -99,7 +99,7 @@ export class ObsidianHttpHandler {
         // Build Obsidian request params - start with minimal config
         const requestParams: RequestUrlParam = {
             url,
-            method: request.method as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
+            method: request.method,
             headers,
             // `throw: false` instructs Obsidian NOT to throw on HTTP error
             // status codes (4xx/5xx). We return them as normal responses so

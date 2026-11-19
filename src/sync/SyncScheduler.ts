@@ -139,10 +139,6 @@ export class SyncScheduler {
      *
      * The interval is registered via `Plugin.registerInterval` so Obsidian
      * automatically clears it on plugin unload.
-     * `registerInterval` returns a `number` (the raw interval ID) but
-     * TypeScript may infer a `NodeJS.Timeout` type in some environments; the
-     * `as unknown as number` cast ensures we store a plain number regardless
-     * of the TypeScript environment's DOM/Node type resolution.
      */
     start(): void {
         if (this.isEnabled) return;
@@ -155,16 +151,13 @@ export class SyncScheduler {
         const intervalMs = this.settings.syncIntervalMinutes * 60 * 1000;
 
         // Register interval with plugin for auto-cleanup on unload.
-        // Cast required: Obsidian's registerInterval returns the raw interval ID
-        // as a number, but TypeScript's lib may type window.setInterval as
-        // returning NodeJS.Timeout in some configurations.
         this.intervalId = this.plugin.registerInterval(
             window.setInterval(() => {
                 if (!this.isPaused) {
                     void this.triggerSync('scheduled');
                 }
             }, intervalMs)
-        ) as unknown as number;
+        );
 
         if (this.settings.debugLogging) {
             console.debug(`[S3 Sync] Scheduler started: every ${this.settings.syncIntervalMinutes} minutes`);

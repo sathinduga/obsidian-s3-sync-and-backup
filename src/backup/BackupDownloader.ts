@@ -224,7 +224,7 @@ export class BackupDownloader {
      * Uses the standard browser download technique:
      * 1. Create an object URL from the ZIP blob via `URL.createObjectURL`.
      * 2. Programmatically create an `<a>` element with `download` attribute set.
-     * 3. Append it to `document.body`, click it, then immediately remove it.
+     * 3. Append it to the active document body, click it, then immediately remove it.
      * 4. Revoke the object URL to free memory.
      *
      * This is necessary because there is no native browser API to trigger a file save
@@ -238,15 +238,15 @@ export class BackupDownloader {
         const blob = await this.createDownloadBlob(backupName);
 
         // Standard browser download technique: create a temporary object URL, attach it
-        // to a hidden <a> element, programmatically click it, then immediately clean up.
+        // to a temporary <a> element, programmatically click it, then immediately clean up.
         // This is the only cross-browser way to trigger a file-save dialog from JS.
         const url = URL.createObjectURL(blob);
-        const link = activeDocument.createElement('a');
-        link.href = url;
-        link.download = `${backupName}.zip`;
-        activeDocument.body.appendChild(link);
+        const body = activeDocument.body;
+        const link = body.createEl('a', {
+            attr: { href: url, download: `${backupName}.zip` },
+        });
         link.click();
-        activeDocument.body.removeChild(link);
+        body.removeChild(link);
         URL.revokeObjectURL(url);
     }
 }

@@ -105,7 +105,7 @@ export class BackupListModal extends Modal {
 
 		// Timestamp as readable date
 		const date = new Date(backup.timestamp);
-		info.createEl('div', {
+		info.createDiv({
 			text: date.toLocaleString(),
 			cls: 's3-backup-row-date',
 		});
@@ -117,7 +117,7 @@ export class BackupListModal extends Modal {
 		if (backup.encrypted) {
 			meta.push('encrypted');
 		}
-		info.createEl('div', {
+		info.createDiv({
 			text: meta.join(' · '),
 			cls: 's3-backup-row-meta',
 		});

@@ -377,7 +377,7 @@ export class S3Provider {
                 if (value) chunks.push(value);
             }
         } else if (typeof responseBody === 'object' && responseBody !== null && Symbol.asyncIterator in responseBody) {
-            for await (const chunk of responseBody as { [Symbol.asyncIterator](): AsyncIteratorLike<Uint8Array> }) {
+            for await (const chunk of responseBody) {
                 chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
             }
         } else {
