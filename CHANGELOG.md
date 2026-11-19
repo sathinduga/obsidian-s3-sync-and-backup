@@ -6,8 +6,6 @@
 ### ⚠ BREAKING CHANGES
 
 * **settings:** Requires Obsidian 1.11.5 or later. Secrets are stored locally on each device. Plugin version 4.2.6 remains available for older Obsidian versions.
-* **settings:** requires Obsidian 1.11.4 or later; secrets are local to each device.
-* **settings:** requires Obsidian 1.11.4 or later; secrets are local to each device.
 
 ### Features
 
