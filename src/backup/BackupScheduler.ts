@@ -165,7 +165,7 @@ export class BackupScheduler {
             window.setInterval(() => {
                 void this.checkAndRunBackup();
             }, checkIntervalMs)
-        ) as unknown as number;
+        );
 
         if (this.settings.debugLogging) {
             console.debug(`[S3 Backup] Scheduler started: ${this.settings.backupInterval}`);

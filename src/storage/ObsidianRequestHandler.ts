@@ -89,7 +89,7 @@ export async function obsidianFetch(
     // Build request params
     const requestParams: RequestUrlParam = {
         url,
-        method: (init?.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS',
+        method: init?.method || 'GET',
         headers,
         // `throw: false` mirrors the behaviour of the native `fetch()` spec:
         // HTTP error statuses (4xx/5xx) resolve the promise with a Response

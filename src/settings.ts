@@ -414,7 +414,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// State: transitioning (migration in progress on this or another device)
 		if (state?.remoteMode === 'transitioning') {
-			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-warning' });
+			const noteEl = containerEl.createDiv({ cls: 's3-sync-backup-warning' });
 			noteEl.createEl('p', {
 				text: 'Encryption state transition in progress. Sync and backup are paused until migration completes.',
 			});
@@ -423,7 +423,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// State: encrypted but no key loaded (locked — other device enabled, or restart)
 		if (state?.remoteMode === 'encrypted' && !state.hasKey) {
-			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-warning' });
+			const noteEl = containerEl.createDiv({ cls: 's3-sync-backup-warning' });
 			noteEl.createEl('p', {
 				text: 'Vault is encrypted. Enter your passphrase to unlock sync and backup.',
 			});
@@ -494,7 +494,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// State: encrypted and key loaded (fully unlocked)
 		if (state?.remoteMode === 'encrypted' && state.hasKey) {
-			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-info' });
+			const noteEl = containerEl.createDiv({ cls: 's3-sync-backup-info' });
 			noteEl.createEl('p', {
 				text: 'End-to-end encryption is active. All files are encrypted before upload.',
 			});
@@ -563,7 +563,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 
 		// If the user just toggled ON, show passphrase entry
 		if (this.showEncryptionSetup && state?.remoteMode === 'plaintext') {
-			const noteEl = containerEl.createEl('div', { cls: 's3-sync-backup-warning' });
+			const noteEl = containerEl.createDiv({ cls: 's3-sync-backup-warning' });
 			noteEl.createEl('p', {
 				text: 'This passphrase encrypts both synced files and backups. If lost, your data cannot be recovered.',
 			});
@@ -589,7 +589,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 					});
 				});
 
-			strengthEl = containerEl.createEl('div', { cls: 's3-sync-passphrase-strength' });
+			strengthEl = containerEl.createDiv({ cls: 's3-sync-passphrase-strength' });
 
 			new Setting(containerEl)
 				.setName('Remember passphrase')
