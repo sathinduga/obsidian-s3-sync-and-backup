@@ -1,5 +1,30 @@
 # Changelog
 
+## [5.1.0](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/5.0.1...5.1.0) (2026-11-19)
+
+
+### Features
+
+* **settings:** add Obsidian settings search ([7d5f31e](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/7d5f31e0b9275861d9bdaad8d1f66535bbca00f3))
+* **settings:** add Obsidian settings search ([9ebd31b](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/9ebd31b094a057c6fa2a8ecf651e143a40a8ed32))
+
+
+### Bug Fixes
+
+* **backup:** prune Backblaze snapshots with single deletes ([2b5218b](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/2b5218bc4e3fb68a6eec02abc6c312936213921d))
+* **backup:** prune Backblaze snapshots with single deletes ([05c99f6](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/05c99f6f65a8c71df69ff858f62c48ef86a1c4bf)), closes [#102](https://github.com/sathinduga/obsidian-s3-sync-and-backup/issues/102)
+* **backup:** stop cleanup when the live backup prefix changes ([5fda356](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/5fda356aa0e1b5fa15284f05a677ec69b8abe002))
+* **crypto:** remember passphrase after unlocking a vault ([ea57cde](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/ea57cdeca10c1be48e3501d1f53f5246e4b8fd2f))
+* **crypto:** remember passphrase after unlocking a vault ([185e9fd](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/185e9fdbbcdf7806cdbdcf31e612d702506e0576))
+* **plugin:** address Obsidian scorecard code warnings ([31c168a](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/31c168a21bdc152d761009f56d9a7488002f2280))
+* **plugin:** address Obsidian scorecard code warnings ([8d49b37](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/8d49b37e9bf13e325d9aed734ccd6cb3762a2d35))
+
+
+### Tests
+
+* **backup:** cover focus changes during ZIP download ([09a6b5d](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/09a6b5d0d83657736b8111e510895541889efd49))
+* **settings:** cover both Obsidian DOM helpers ([d41186c](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/d41186c97c478bb1e886d96b1851e5fe852715e0))
+
 ## [5.0.1](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/5.0.0...5.0.1) (2026-11-19)
 
 
