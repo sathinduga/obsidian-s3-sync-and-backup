@@ -164,7 +164,7 @@ The plugin is a sync and backup tool, so by design it enumerates every file in y
 | **Enable backups** | Master switch for scheduled vault backup snapshots. | On |
 | **Backup prefix** | S3 folder path for backups (e.g., `backups` → `s3://bucket/backups/`). | `backups` |
 | **Backup interval** | How often to create snapshots. Options: every hour, 6 hours, 12 hours, daily, every 3 days, or weekly. | Daily |
-| **Enable retention** | Automatically delete old backups based on the retention policy. | Off |
+| **Enable retention** | Automatically delete old backups after saving a new snapshot. If cleanup fails, the new snapshot remains available and the plugin reports the cleanup error. | Off |
 | **Retention mode** | How to determine which backups to keep: **By days** (delete backups older than N days) or **By copies** (keep only the latest N backups). Only shown when retention is enabled. | By copies |
 | **Retention days** | Delete backups older than this many days (1–360). Only shown in "By days" mode. | 30 |
 | **Retention copies** | Keep only the latest N backups (1–1000). Only shown in "By copies" mode. | 30 |

@@ -17,6 +17,7 @@ const createMockS3Provider = () => ({
     listObjects: jest.fn(),
     downloadFileAsText: jest.fn(),
     deletePrefix: jest.fn(),
+    guardDeletionDestination: jest.fn(() => () => undefined),
 });
 
 /**
@@ -74,7 +75,26 @@ describe('RetentionManager', () => {
         });
     });
 
+    /** Verifies the selected copy limit and the backup prefix across asynchronous deletion. */
     describe('applyRetentionPolicy - copies mode', () => {
+        it('stops pruning when the backup prefix changes in the middle of the pass', async () => {
+            const mockProvider = createMockS3Provider();
+            const settings = createTestSettings({ retentionEnabled: true, retentionMode: 'copies', retentionCopies: 1 });
+            const manager = new RetentionManager(mockProvider as never, settings);
+            jest.spyOn(manager, 'listBackups').mockResolvedValue([
+                createBackupInfo('backup-newest', '2024-01-03T10:00:00Z'),
+                createBackupInfo('backup-newer', '2024-01-02T10:00:00Z'),
+                createBackupInfo('backup-oldest', '2024-01-01T10:00:00Z'),
+            ]);
+            mockProvider.deletePrefix.mockImplementation(async () => {
+                manager.updateSettings({ ...settings, backupPrefix: 'other-prefix' });
+            });
+
+            await expect(manager.applyRetentionPolicy()).rejects.toThrow('Backup prefix changed');
+            expect(mockProvider.deletePrefix).toHaveBeenCalledTimes(1);
+            expect(mockProvider.deletePrefix).toHaveBeenCalledWith('backups/backup-newer/');
+        });
+
         /**
          * Should delete oldest backups exceeding retentionCopies limit
          */

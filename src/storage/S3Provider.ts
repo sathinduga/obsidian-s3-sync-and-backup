@@ -211,6 +211,7 @@ export class S3Provider {
      * @throws {Error} On S3 or network failure.
      */
     async listObjects(prefix: string, recursive = true): Promise<S3ObjectInfo[]> {
+        const bucket = this.settings.bucket;
         const client = this.getClient();
         const objects: S3ObjectInfo[] = [];
 
@@ -218,7 +219,7 @@ export class S3Provider {
 
         do {
             const response: ListObjectsV2CommandOutput = await client.send(new ListObjectsV2Command({
-                Bucket: this.settings.bucket,
+                Bucket: bucket,
                 Prefix: prefix,
                 Delimiter: recursive ? undefined : '/',
                 ContinuationToken: continuationToken,
@@ -735,7 +736,8 @@ export class S3Provider {
     }
 
     /**
-     * Delete multiple S3 objects in batched `DeleteObjects` requests.
+     * Delete multiple S3 objects. Backblaze B2 uses bounded single-object deletes
+     * because it rejects the batch POST sent by Obsidian's desktop transport.
      *
      * The S3 `DeleteObjects` API accepts at most 1000 keys per call, so large
      * arrays are split into 1000-key chunks and each chunk is sent as a
@@ -746,22 +748,47 @@ export class S3Provider {
      *   is a no-op and returns `0` immediately.
      * @returns Total number of successfully deleted objects (input count minus
      *   any keys that had per-key errors reported by S3).
-     * @throws {Error} On S3/network failure at the request level.
+     * @throws {Error} On S3/network failure at the request level or a failed B2 delete.
      */
     async deleteFiles(keys: string[]): Promise<number> {
         if (keys.length === 0) return 0;
 
+        const { bucket, endpoint, provider } = this.settings;
         const client = this.getClient();
+        const assertSameDestination = this.guardDeletionDestination();
+        // Legacy configurations may still use the generic provider with a B2 endpoint.
+        const isBackblaze = provider === 'b2' ||
+            (provider === 'custom' && new URL(endpoint).hostname.endsWith('.backblazeb2.com'));
+        if (isBackblaze) {
+            // Wait for each group to settle before reporting a failure. A large
+            // snapshot can have thousands of keys, so cap simultaneous requests.
+            const concurrency = 8;
+            for (let i = 0; i < keys.length; i += concurrency) {
+                assertSameDestination();
+                const results = await Promise.allSettled(
+                    keys.slice(i, i + concurrency).map(key =>
+                        client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })),
+                    ),
+                );
+                const failed = results.find(result => result.status === 'rejected');
+                if (failed?.status === 'rejected') {
+                    const error: unknown = failed.reason;
+                    throw error instanceof Error ? error : new Error('Backblaze object deletion failed');
+                }
+            }
+            return keys.length;
+        }
 
         // S3 DeleteObjects has a limit of 1000 objects per request
         const BATCH_SIZE = 1000;
         let deleted = 0;
 
         for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+            assertSameDestination();
             const batch = keys.slice(i, i + BATCH_SIZE);
 
             const response = await client.send(new DeleteObjectsCommand({
-                Bucket: this.settings.bucket,
+                Bucket: bucket,
                 Delete: {
                     Objects: batch.map(key => ({ Key: key })),
                     Quiet: true,
@@ -869,18 +896,37 @@ export class S3Provider {
      * Delete every S3 object whose key begins with `prefix`.
      *
      * Combines {@link listObjects} (recursive) with {@link deleteFiles}, so it
-     * inherits both the pagination of listings and the 1000-key batching of
-     * deletes.  Suitable for wiping an entire sync prefix or removing a backup
-     * snapshot directory.
+     * inherits pagination and the provider-specific deletion strategy.
      *
      * @param prefix - S3 key prefix to wipe (e.g. `"backups/backup-2024-01-01T12-00-00/"`).
      * @returns Total number of objects deleted.
-     * @throws {Error} On S3/network failure.
+     * @throws {Error} If the listing fails or the provider cannot delete all objects.
      */
     async deletePrefix(prefix: string): Promise<number> {
+        const assertSameDestination = this.guardDeletionDestination();
         const objects = await this.listObjects(prefix, true);
+        assertSameDestination();
         const keys = objects.map(obj => obj.key);
-        return await this.deleteFiles(keys);
+        const deleted = await this.deleteFiles(keys);
+        if (deleted !== keys.length) {
+            throw new Error(`Could not delete ${keys.length - deleted} of ${keys.length} objects. Check delete permissions and object retention settings.`);
+        }
+        return deleted;
+    }
+
+    /**
+     * Capture the current S3 destination before asynchronous deletion work.
+     * @returns A check that throws if the bucket or client changed. Client identity
+     * also detects endpoint changes and rotation to another set of credentials.
+     */
+    guardDeletionDestination(): () => void {
+        const bucket = this.settings.bucket;
+        const client = this.getClient();
+        return () => {
+            if (bucket !== this.settings.bucket || client !== this.getClient()) {
+                throw new Error('Storage settings changed during cleanup. Try again.');
+            }
+        };
     }
 
     /**

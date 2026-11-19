@@ -17,7 +17,7 @@
  *
  * ## Deletion
  * Backup folders are deleted by calling `S3Provider.deletePrefix()`, which removes all
- * objects sharing the folder prefix in a single batched operation.
+ * objects sharing the folder prefix using the provider's deletion strategy.
  */
 
 import { S3Provider } from '../storage/S3Provider';
@@ -85,13 +85,16 @@ export class RetentionManager {
      *
      * @returns The number of backup folders deleted. Returns `0` if retention is
      *   disabled or no backups qualify for deletion.
-     * @throws Any S3 error from `listBackups()` or `deleteBackup()`.
+     * @throws If deletion is incomplete, storage settings change, or an S3 request fails.
      */
     async applyRetentionPolicy(): Promise<number> {
         if (!this.settings.retentionEnabled) {
             return 0;
         }
 
+        const prefix = this.normalizedBackupPrefix;
+        const { retentionMode, retentionDays, retentionCopies } = this.settings;
+        const assertSameDestination = this.s3Provider.guardDeletionDestination();
         const backups = await this.listBackups();
 
         if (backups.length === 0) {
@@ -103,23 +106,27 @@ export class RetentionManager {
 
         let toDelete: BackupInfo[] = [];
 
-        if (this.settings.retentionMode === 'days') {
+        if (retentionMode === 'days') {
             // Delete backups older than retentionDays
-            const cutoffMs = Date.now() - (this.settings.retentionDays * 24 * 60 * 60 * 1000);
+            const cutoffMs = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
 
             toDelete = backups.filter((backup) => {
                 const backupTime = new Date(backup.timestamp).getTime();
                 return backupTime < cutoffMs;
             });
-        } else if (this.settings.retentionMode === 'copies') {
+        } else if (retentionMode === 'copies') {
             // Keep only retentionCopies, delete the rest
-            if (backups.length > this.settings.retentionCopies) {
-                toDelete = backups.slice(this.settings.retentionCopies);
+            if (backups.length > retentionCopies) {
+                toDelete = backups.slice(retentionCopies);
             }
         }
 
         // Delete excess backups
         for (const backup of toDelete) {
+            if (prefix !== this.normalizedBackupPrefix) {
+                throw new Error('Backup prefix changed during cleanup. Try again.');
+            }
+            assertSameDestination();
             await this.deleteBackup(backup.name);
         }
 
@@ -179,7 +186,7 @@ export class RetentionManager {
         const backups: BackupInfo[] = [];
 
         for (const folder of backupFolders) {
-            const manifestKey = addPrefix(`${folder}/.backup-manifest.json`, this.normalizedBackupPrefix);
+            const manifestKey = addPrefix(`${folder}/.backup-manifest.json`, prefix);
 
             try {
                 const manifestJson = await this.s3Provider.downloadFileAsText(manifestKey);
@@ -211,11 +218,11 @@ export class RetentionManager {
     /**
      * Delete all S3 objects belonging to the specified backup folder.
      *
-     * Delegates to `S3Provider.deletePrefix()` which performs a batched delete of
-     * every object whose key starts with `{backupPrefix}/{backupName}/`.
+     * Delegates to `S3Provider.deletePrefix()` to remove every object whose key
+     * starts with `{backupPrefix}/{backupName}/`.
      *
      * @param backupName - The backup folder name to delete (e.g., `backup-2024-12-25T14-30-00`).
-     * @throws Any S3 error from the delete operation.
+     * @throws If cleanup is incomplete, storage settings change, or an S3 request fails.
      */
     async deleteBackup(backupName: string): Promise<void> {
         const prefix = addPrefix(`${backupName}/`, this.normalizedBackupPrefix);
