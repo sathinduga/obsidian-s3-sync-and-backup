@@ -203,9 +203,9 @@ describe('SnapshotCreator', () => {
         /**
          * Empty patterns
          */
-        it('should not exclude anything with empty patterns', () => {
+        it('keeps ordinary files in scope and excludes config files with empty patterns', () => {
             expect(testExclude([], 'file.tmp')).toBe(false);
-            expect(testExclude([], '.obsidian/config')).toBe(false);
+            expect(testExclude([], '.obsidian/config')).toBe(true);
         });
     });
 
@@ -341,18 +341,22 @@ describe('SnapshotCreator', () => {
             expect(mockProvider.uploadFile).toHaveBeenNthCalledWith(2, expect.stringContaining('/.backup-manifest.json'), expect.any(String), { contentType: 'application/json' });
         });
 
-        /**
-         * Should skip files that match configured exclude patterns.
-         */
-        it('should skip excluded files', async () => {
+        it('skips the configuration folder and files matching documented exclude patterns', async () => {
             const mockApp = createMockApp();
+            mockApp.vault.configDir = '.obsidian-mobile';
             mockApp.vault.getFiles.mockReturnValue([
-                createMockFile('notes/test.md'),
-                createMockFile('temp/file.tmp'),
+                createMockFile('Private/Keep.md'),
+                createMockFile('Private/Journal.md'),
+                createMockFile('Archive/2026/Note.md'),
+                createMockFile('Board.canvas'),
+                createMockFile('Notes/Board.canvas'),
+                createMockFile('.obsidian-mobile/hotkeys.json'),
             ]);
             const mockProvider = createMockS3Provider();
             mockProvider.uploadFile.mockResolvedValue(undefined);
-            const settings = createTestSettings({ excludePatterns: ['temp/**'] });
+            const settings = createTestSettings({
+                excludePatterns: ['Private/Journal.md', 'Archive/**', '*.canvas', '**/*.canvas'],
+            });
             const creator = new SnapshotCreator(mockApp as never, mockProvider as never, settings);
 
             mockedReadVaultFile.mockResolvedValue('content');
@@ -363,7 +367,11 @@ describe('SnapshotCreator', () => {
             expect(result.success).toBe(true);
             expect(result.filesBackedUp).toBe(1);
             expect(mockedReadVaultFile).toHaveBeenCalledTimes(1);
+            expect(mockedReadVaultFile).toHaveBeenCalledWith(mockApp.vault, expect.objectContaining({ path: 'Private/Keep.md' }));
             expect(mockProvider.uploadFile).toHaveBeenCalledTimes(2);
+            expect(mockProvider.uploadFile).toHaveBeenNthCalledWith(1, expect.stringContaining('/Private/Keep.md'), 'content');
+            const manifest = JSON.parse(mockProvider.uploadFile.mock.calls[1]![1] as string);
+            expect(manifest.checksums).toEqual({ 'Private/Keep.md': 'sha256:checksum' });
         });
 
         /**

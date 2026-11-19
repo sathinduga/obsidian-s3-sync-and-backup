@@ -947,7 +947,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * Render the Advanced settings section.
 	 *
 	 * Renders debug logging toggle, exclude patterns textarea, and a "Reset to defaults"
-	 * button. Exclude patterns are comma-separated glob strings (e.g., `workspace*`).
+	 * button. Exclusions are comma-separated vault-relative paths or globs.
 	 *
 	 * @param section - Shared rows for the settings section.
 	 */
@@ -964,9 +964,8 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		});
 
 		// Exclude patterns
-		section.add('Exclude patterns', 'Files/folders to exclude from sync (comma-separated globs)', (setting) => {
+		section.add('Exclude patterns', 'Exclude files from sync and backup using comma-separated vault-relative paths or globs', (setting) => {
 			setting.addTextArea((text) => {
-				text.setPlaceholder('Example: workspace*, .trash/*');
 				text.setValue(this.plugin.settings.excludePatterns.join(', '));
 				text.onChange(async (value) => {
 					this.plugin.settings.excludePatterns = value

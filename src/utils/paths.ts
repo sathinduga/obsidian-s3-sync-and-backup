@@ -291,6 +291,19 @@ export function isConflictFile(path: string): boolean {
 }
 
 /**
+ * Check whether a path is the vault's configuration folder or falls inside it.
+ *
+ * @param path - Vault-relative path to test.
+ * @param configDir - The configuration folder reported by `vault.configDir`.
+ * @returns Whether the path should be excluded from file transfers and tracking.
+ */
+export function isVaultConfigPath(path: string, configDir: string): boolean {
+    const normalized = normalizePath(path);
+    const config = normalizePath(configDir);
+    return normalized === config || normalized.startsWith(`${config}/`);
+}
+
+/**
  * Derive the original vault path from a conflict artifact path.
  *
  * Strips the `LOCAL_` (6 chars) or `REMOTE_` (7 chars) prefix from the filename and
@@ -308,30 +321,6 @@ export function isConflictFile(path: string): boolean {
  * getOriginalFromConflict('LOCAL_note.md')         // → 'note.md'
  * getOriginalFromConflict('Notes/note.md')         // → null
  */
-/**
- * The plugin's manifest ID, used to construct the hardcoded exclusion path.
- * Must match the `id` field in `manifest.json`.
- */
-const PLUGIN_ID = 'simple-storage-sync-and-backup';
-
-/**
- * Check whether a vault-relative path falls inside this plugin's own settings directory.
- *
- * This is a hardcoded, non-overridable exclusion to prevent the plugin from syncing
- * its own `data.json` or any other plugin
- * artefact (`main.js`, `manifest.json`, `styles.css`) to S3.
- *
- * @param path      - The vault-relative file path to test.
- * @param configDir - The vault config directory name (from `app.vault.configDir`,
- *                    typically `".obsidian"`).
- * @returns `true` if the path is inside the plugin's settings folder.
- */
-export function isPluginOwnPath(path: string, configDir: string): boolean {
-	const normalized = normalizePath(path);
-	const pluginDir = `${normalizePath(configDir)}/plugins/${PLUGIN_ID}/`;
-	return normalized.startsWith(pluginDir) || normalized === pluginDir.slice(0, -1);
-}
-
 export function getOriginalFromConflict(conflictPath: string): string | null {
     const dir = getDirectory(conflictPath);
     const filename = getFilename(conflictPath);

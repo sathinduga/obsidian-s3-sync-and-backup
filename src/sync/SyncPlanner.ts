@@ -18,7 +18,7 @@ import {
 	SyncPlanItem,
 	SyncStateRecord,
 } from '../types';
-import { isConflictFile, matchesAnyGlob, getFilename, isPluginOwnPath } from '../utils/paths';
+import { isConflictFile, matchesAnyGlob, getFilename, isVaultConfigPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 import { SyncJournal } from './SyncJournal';
 import { SyncPathCodec } from './SyncPathCodec';
@@ -204,7 +204,7 @@ export class SyncPlanner {
 		for (const file of localFiles) {
 			if (isConflictFile(file.path)) {
 				const original = this.getOriginalFromConflictFilename(file.path);
-				if (original) {
+				if (original && !this.shouldExclude(original)) {
 					conflictOriginalPaths.add(original);
 				}
 				continue;
@@ -465,6 +465,7 @@ export class SyncPlanner {
 	 *   separately in {@link discoverState} and must not appear as a sync target.
 	 * - Its filename starts with `.obsidian-s3-sync` — internal plugin metadata files that
 	 *   must never be synced as ordinary vault content (e.g. the `.vault.enc` marker).
+	 * - It is in the vault’s configuration folder.
 	 * - It matches any pattern in `settings.excludePatterns` — user-configured glob exclusions.
 	 *
 	 * @param path - Vault-relative file path to evaluate.
@@ -473,8 +474,7 @@ export class SyncPlanner {
 	private shouldExclude(path: string): boolean {
 		if (isConflictFile(path)) return true;
 
-		// Hardcoded: never sync the plugin's own settings directory
-		if (isPluginOwnPath(path, this.app.vault.configDir)) return true;
+		if (isVaultConfigPath(path, this.app.vault.configDir)) return true;
 
 		const filename = getFilename(path);
 		if (filename.startsWith('.obsidian-s3-sync')) return true;

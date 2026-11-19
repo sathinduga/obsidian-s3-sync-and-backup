@@ -1,7 +1,7 @@
 /**
  * Snapshot Creator Module
  *
- * Creates a complete, point-in-time copy of the entire Obsidian vault in S3. Each
+ * Creates a point-in-time copy of in-scope vault files in S3. Each
  * backup is stored in a timestamped folder under the configured backup prefix:
  *
  * ```
@@ -24,8 +24,8 @@
  * without the encryption key to inspect the backup's metadata.
  *
  * ## Exclude patterns
- * Files matching any glob in `settings.excludePatterns` are skipped. Errors uploading
- * individual files are collected in `BackupResult.errors` rather than aborting the
+ * The vault configuration folder and paths matching `settings.excludePatterns`
+ * are skipped. Errors uploading individual files are collected in `BackupResult.errors` rather than aborting the
  * entire snapshot — the backup is marked `success: false` only if any file errored.
  */
 
@@ -34,11 +34,11 @@ import { S3Provider } from '../storage/S3Provider';
 import { hashContent } from '../crypto/Hasher';
 import { encrypt } from '../crypto/FileEncryptor';
 import { BackupManifest, BackupResult, S3SyncBackupSettings } from '../types';
-import { addPrefix, matchesAnyGlob, normalizePrefix, isPluginOwnPath } from '../utils/paths';
+import { addPrefix, matchesAnyGlob, normalizePrefix, isVaultConfigPath } from '../utils/paths';
 import { readVaultFile } from '../utils/vaultFiles';
 
 /**
- * Creates full vault backup snapshots in S3.
+ * Creates backup snapshots of in-scope vault files in S3.
  *
  * Each call to `createSnapshot()` produces a self-contained backup folder in S3
  * containing every non-excluded vault file plus a `.backup-manifest.json` with
@@ -108,9 +108,9 @@ export class SnapshotCreator {
     }
 
     /**
-     * Create a full vault snapshot and upload it to S3.
+     * Create a snapshot of in-scope vault files and upload it to S3.
      *
-     * Iterates over every file in the vault, skips files matching `excludePatterns`,
+     * Iterates over `vault.getFiles()`, skips the config folder and excluded paths,
      * uploads each file (optionally encrypted), computes a SHA-256 checksum per file,
      * and finally uploads a `.backup-manifest.json` containing all checksums and
      * metadata.
@@ -140,7 +140,7 @@ export class SnapshotCreator {
         };
 
         try {
-            // Get all vault files
+            // Discover local files through Obsidian’s vault index.
             const files = this.app.vault.getFiles();
             const checksums: Record<string, string> = {};
 
@@ -292,14 +292,12 @@ export class SnapshotCreator {
     /**
      * Determine whether a vault file path should be excluded from the snapshot.
      *
-     * Delegates to `matchesAnyGlob` with the configured `excludePatterns`. If any
-     * pattern matches, the file is silently skipped.
      *
      * @param path - The vault-relative file path to test (e.g., `Notes/my-note.md`).
-     * @returns `true` if the path matches at least one exclude pattern, `false` otherwise.
+     * @returns Whether the path belongs to the configuration folder or matches an exclusion.
      */
     private shouldExclude(path: string): boolean {
         return matchesAnyGlob(path, this.settings.excludePatterns)
-            || isPluginOwnPath(path, this.app.vault.configDir);
+            || isVaultConfigPath(path, this.app.vault.configDir);
     }
 }

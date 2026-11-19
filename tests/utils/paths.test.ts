@@ -14,7 +14,7 @@ import {
     getOriginalFromConflict,
     addPrefix,
     removePrefix,
-    isPluginOwnPath,
+    isVaultConfigPath,
 } from '../../src/utils/paths';
 
 describe('Path Utils', () => {
@@ -242,35 +242,22 @@ describe('Path Utils', () => {
         });
     });
 
-    describe('isPluginOwnPath', () => {
-        it('should match data.json inside plugin directory', () => {
-            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup/data.json', '.obsidian')).toBe(true);
+    /** Config folders may be overridden per device. Match the directory boundary. */
+    describe('isVaultConfigPath', () => {
+        it.each([
+            '.obsidian',
+            '.obsidian/hotkeys.json',
+            '.obsidian/plugins/other-plugin/data.json',
+            '.obsidian\\plugins\\simple-storage-sync-and-backup\\data.json',
+        ])('matches %s inside the default configuration folder', (path) => {
+            expect(isVaultConfigPath(path, '.obsidian')).toBe(true);
         });
 
-        it('should match main.js inside plugin directory', () => {
-            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup/main.js', '.obsidian')).toBe(true);
-        });
-
-        it('should match the plugin directory itself', () => {
-            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup', '.obsidian')).toBe(true);
-        });
-
-        it('should not match other plugin directories', () => {
-            expect(isPluginOwnPath('.obsidian/plugins/other-plugin/data.json', '.obsidian')).toBe(false);
-        });
-
-        it('should not match files outside plugins directory', () => {
-            expect(isPluginOwnPath('.obsidian/workspace.json', '.obsidian')).toBe(false);
-            expect(isPluginOwnPath('Notes/my-note.md', '.obsidian')).toBe(false);
-        });
-
-        it('should work with custom configDir', () => {
-            expect(isPluginOwnPath('.config/plugins/simple-storage-sync-and-backup/data.json', '.config')).toBe(true);
-            expect(isPluginOwnPath('.obsidian/plugins/simple-storage-sync-and-backup/data.json', '.config')).toBe(false);
-        });
-
-        it('should normalize backslashes in path', () => {
-            expect(isPluginOwnPath('.obsidian\\plugins\\simple-storage-sync-and-backup\\data.json', '.obsidian')).toBe(true);
+        it('matches an override and keeps similarly named paths in scope', () => {
+            expect(isVaultConfigPath('.obsidian-mobile/workspace.json', '.obsidian-mobile')).toBe(true);
+            expect(isVaultConfigPath('.obsidian-mobile-notes/note.md', '.obsidian-mobile')).toBe(false);
+            expect(isVaultConfigPath('Notes/.obsidian-mobile/recipe.md', '.obsidian-mobile')).toBe(false);
+            expect(isVaultConfigPath('Private/Keep.md', '.obsidian-mobile')).toBe(false);
         });
     });
 });

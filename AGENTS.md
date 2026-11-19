@@ -54,7 +54,7 @@ obsidian-s3-sync-and-backup/
 │   │
 │   ├── backup/                      # Backup engine
 │   │   ├── BackupScheduler.ts       # Backup scheduling with catch-up logic
-│   │   ├── SnapshotCreator.ts       # Full vault snapshot creation
+│   │   ├── SnapshotCreator.ts       # In-scope vault file snapshots
 │   │   ├── RetentionManager.ts      # Old backup cleanup (by days/copies)
 │   │   ├── BackupDownloader.ts      # Backup download as zip
 │   │   └── BackupListModal.ts       # Modal UI listing recent backups with download
@@ -117,7 +117,7 @@ s3://bucket/
 │
 └── {backupPrefix}/                   # default: "backups"
     └── backup-{ISO_TIMESTAMP}/
-        ├── [full vault snapshot]
+        ├── [in-scope vault files]
         └── .backup-manifest.json
 ```
 
