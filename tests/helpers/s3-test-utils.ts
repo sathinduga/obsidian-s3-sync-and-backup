@@ -160,10 +160,8 @@ export function describeEachProvider(): ProviderDescribe {
  * @returns A configured `S3Client` talking to the provider's real endpoint.
  */
 export function createTestS3Client(provider: TestProvider): S3Client {
-    const config: S3ClientConfig = buildS3ClientConfig(createTestSettings(provider), () => {
-        const { accessKeyId, secretAccessKey } = getS3Config(provider);
-        return { accessKeyId, secretAccessKey };
-    });
+    const { accessKeyId, secretAccessKey } = getS3Config(provider);
+    const config: S3ClientConfig = buildS3ClientConfig(createTestSettings(provider), { accessKeyId, secretAccessKey });
     config.requestHandler = new NodeHttpHandler({
         connectionTimeout: 5000,
         socketTimeout: 30000,

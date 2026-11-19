@@ -469,15 +469,16 @@ describe('EncryptionCoordinator', () => {
 			expect(callbacks.saveSettings).not.toHaveBeenCalled();
 		});
 
-		it('keeps the current state and does not throw on marker read errors', async () => {
-			currentMarker().exists.mockResolvedValue(true);
-			currentMarker().getMetadata.mockResolvedValue(createMarkerMetadata('enabled'));
-			await coordinator.refreshRemoteMode(callbacks.saveSettings);
-
+		it('blocks when the marker read fails and allows sync after a successful retry', async () => {
 			currentMarker().exists.mockRejectedValue(new Error('network down'));
+			await coordinator.refreshRemoteMode(callbacks.saveSettings);
+			expect(coordinator.shouldBlock()).toBe(true);
+			expect(coordinator.getBlockReason()).toContain('Unable to verify');
 
-			await expect(coordinator.refreshRemoteMode(callbacks.saveSettings)).resolves.toBeUndefined();
-			expect(coordinator.getState().remoteMode).toBe('encrypted');
+			currentMarker().exists.mockResolvedValue(false);
+			await coordinator.refreshRemoteMode(callbacks.saveSettings);
+			expect(coordinator.shouldBlock()).toBe(false);
+			expect(coordinator.getState().remoteMode).toBe('plaintext');
 		});
 	});
 

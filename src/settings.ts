@@ -20,7 +20,6 @@ import {
 	RetentionMode,
 	DEFAULT_SETTINGS,
 } from './types';
-import { S3Provider } from './storage/S3Provider';
 import { normalizePrefix } from './utils/paths';
 import { validatePassphrase } from './crypto/KeyDerivation';
 import { BackupListModal } from './backup/BackupListModal';
@@ -164,9 +163,8 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			.setDesc('Select or create a secret holding your S3 access key ID')
 			.addComponent((el) => new SecretComponent(this.app, el)
 				.setValue(this.plugin.settings.accessKeyIdSecret)
-				.onChange((value) => {
-					this.plugin.settings.accessKeyIdSecret = value;
-					void this.plugin.saveSettings();
+				.onChange(async (value) => {
+					await this.saveCredentialReference('accessKeyIdSecret', value);
 				}));
 
 		// Secret Access Key
@@ -175,9 +173,8 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			.setDesc('Select or create a secret holding your S3 secret access key')
 			.addComponent((el) => new SecretComponent(this.app, el)
 				.setValue(this.plugin.settings.secretAccessKeySecret)
-				.onChange((value) => {
-					this.plugin.settings.secretAccessKeySecret = value;
-					void this.plugin.saveSettings();
+				.onChange(async (value) => {
+					await this.saveCredentialReference('secretAccessKeySecret', value);
 				}));
 
 		// Force Path Style (only for the generic "Other S3-compatible" provider —
@@ -296,8 +293,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	/**
 	 * Test the configured S3 connection and report the result to the user.
 	 *
-	 * Creates a temporary, isolated `S3Provider` with the current settings (does not
-	 * reuse the plugin's shared provider) and calls `testConnection()`. Disables the
+	 * Checks the shared provider used for sync and backup. Disables the
 	 * button during the test to prevent concurrent requests. Displays a `Notice` with
 	 * the success message or error, and resets the button text after a short delay.
 	 *
@@ -310,13 +306,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		buttonEl.disabled = true;
 
 		try {
-			const provider = new S3Provider(
-				this.plugin.settings,
-				undefined,
-				() => this.plugin.secrets.getCredentials(this.plugin.settings),
-			);
-			const message = await provider.testConnection();
-			provider.destroy();
+			const message = await this.plugin.testConnection();
 
 			new Notice(`✓ ${message}`);
 			buttonEl.textContent = '✓ connected';
@@ -336,6 +326,19 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			window.setTimeout(() => {
 				buttonEl.textContent = originalText;
 			}, 2000);
+		}
+	}
+
+	/** Persist the selected secret name and surface failures from Obsidian's settings storage. */
+	private async saveCredentialReference(
+		key: 'accessKeyIdSecret' | 'secretAccessKeySecret',
+		value: string,
+	): Promise<void> {
+		this.plugin.settings[key] = value;
+		try {
+			await this.plugin.saveSettings();
+		} catch {
+			new Notice('Unable to save the credential selection. Select the secret again to retry.');
 		}
 	}
 
@@ -413,6 +416,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 						try {
 							const success = await coordinator?.unlock(passphraseValue);
 							if (success) {
+								this.plugin.resumeStartupJobs();
 								if (this.plugin.settings.rememberPassphrase) {
 									this.plugin.secrets.setPassphrase(passphraseValue);
 									await this.plugin.saveSettings();

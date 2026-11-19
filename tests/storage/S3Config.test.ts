@@ -15,7 +15,7 @@ import {
     providerSupportsConditionalWrites,
 } from '../../src/storage/S3Config';
 import { S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../../src/types';
-import type { CredentialsResolver, S3Credentials } from '../../src/utils/secrets';
+import type { S3Credentials } from '../../src/utils/secrets';
 
 /** Credentials as resolved from SecretStorage in a configured plugin. */
 const TEST_CREDENTIALS: S3Credentials = {
@@ -24,11 +24,8 @@ const TEST_CREDENTIALS: S3Credentials = {
 };
 
 /** Wrapper defaulting to valid credentials so tests only override what they exercise. */
-function buildS3ClientConfig(
-    settings: S3SyncBackupSettings,
-    resolver: CredentialsResolver = () => TEST_CREDENTIALS,
-) {
-    return buildS3ClientConfigRaw(settings, resolver);
+function buildS3ClientConfig(settings: S3SyncBackupSettings) {
+    return buildS3ClientConfigRaw(settings, TEST_CREDENTIALS);
 }
 
 /** Wrapper defaulting to valid credentials so tests only override what they exercise. */
@@ -235,7 +232,7 @@ describe('S3Config', () => {
         /**
          * Verifies complete config structure for AWS
          */
-        it('should build config for AWS', async () => {
+        it('should build config for AWS', () => {
             const settings = createTestSettings({
                 provider: 'aws',
                 region: 'us-west-2',
@@ -243,25 +240,9 @@ describe('S3Config', () => {
             const config = buildS3ClientConfig(settings);
 
             expect(config.region).toBe('us-west-2');
-            // Credentials are a lazy provider: no secret is stored in the config itself.
-            expect(typeof config.credentials).toBe('function');
-            await expect((config.credentials as () => Promise<S3Credentials>)()).resolves.toEqual(TEST_CREDENTIALS);
+            expect(config.credentials).toEqual(TEST_CREDENTIALS);
             expect(config.forcePathStyle).toBe(false);
             expect(config.endpoint).toBeUndefined();
-        });
-
-        /**
-         * The credentials provider re-reads the resolver on every call so a
-         * secret rotated in SecretStorage is used without rebuilding the client.
-         */
-        it('should resolve credentials lazily on each call', async () => {
-            let current: S3Credentials = { accessKeyId: 'a1', secretAccessKey: 's1' };
-            const config = buildS3ClientConfig(createTestSettings(), () => current);
-            const provider = config.credentials as () => Promise<S3Credentials>;
-
-            await expect(provider()).resolves.toEqual({ accessKeyId: 'a1', secretAccessKey: 's1' });
-            current = { accessKeyId: 'a2', secretAccessKey: 's2' };
-            await expect(provider()).resolves.toEqual({ accessKeyId: 'a2', secretAccessKey: 's2' });
         });
 
         /**

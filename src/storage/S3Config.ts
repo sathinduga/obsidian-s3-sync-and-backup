@@ -20,7 +20,7 @@
  */
 
 import { S3ClientConfig } from '@aws-sdk/client-s3';
-import type { CredentialsResolver, S3Credentials } from '../utils/secrets';
+import type { S3Credentials } from '../utils/secrets';
 import { S3ProviderType, S3SyncBackupSettings, S3_PROVIDER_NAMES } from '../types';
 import { ObsidianHttpHandler } from './ObsidianHttpHandler';
 
@@ -158,16 +158,14 @@ export function providerSupportsConditionalWrites(provider: S3ProviderType): boo
  * are resolved here via the helper functions above.
  *
  * @param settings - Full plugin settings object.
- * @param resolveCredentials - Returns the current S3 credentials (read from SecretStorage).
- *   Wrapped in an async SDK credential provider so each signing call sees the latest
- *   secret values and no secret is retained in the client config.
+ * @param credentials - The resolved credential pair for this client.
  * @returns A ready-to-use `S3ClientConfig` for the `S3Client` constructor.
  * @throws {Error} If the selected provider requires an endpoint but none is
  *   configured (forwarded from `getEndpointForProvider`).
  */
 export function buildS3ClientConfig(
     settings: S3SyncBackupSettings,
-    resolveCredentials: CredentialsResolver,
+    credentials: S3Credentials,
 ): S3ClientConfig {
     const endpoint = getEndpointForProvider(settings);
 
@@ -177,7 +175,7 @@ export function buildS3ClientConfig(
         // RustFS and other S3-compatible endpoints which ignore the region
         // header entirely.
         region: settings.region || 'auto',
-        credentials: async () => resolveCredentials(),
+        credentials,
         forcePathStyle: shouldForcePathStyle(settings),
         // Disable the SDK's default flexible-checksum behaviour for portability.
         //

@@ -34,7 +34,7 @@ export interface S3Credentials {
 	secretAccessKey: string;
 }
 
-/** Resolves credentials at call time so rotated secrets are picked up without a restart. */
+/** Reads current credentials so the S3 provider can replace its client after rotation. */
 export type CredentialsResolver = () => S3Credentials;
 
 /** Settings fields that older plugin versions stored in plaintext. */
@@ -96,30 +96,37 @@ export class SecretVault {
 	 * Move plaintext secrets left in `data.json` by older versions into SecretStorage.
 	 *
 	 * Mutates `settings` in place: sets the secret-name fields and deletes the legacy
-	 * plaintext keys. An existing secret under the default ID with a different value is
-	 * never overwritten; a numeric suffix is used instead. Idempotent.
+	 * plaintext keys only after usable replacements are available. When a restore
+	 * includes a legacy pair and its references do not both resolve, migrate the pair
+	 * together to avoid mixing keys from different credentials. Preserve the local
+	 * remembered passphrase when present.
 	 *
 	 * @param settings - Settings object merged from defaults and persisted data.
 	 * @returns `true` if the object changed and must be persisted again.
+	 * @throws If a migrated value cannot be written and read back from SecretStorage.
 	 */
 	migrateLegacySettings(settings: S3SyncBackupSettings): boolean {
 		const legacy = settings as unknown as Record<string, unknown>;
 		const hasLegacy = LEGACY_KEYS.some((key) => key in legacy);
 		if (!hasLegacy) return false;
 
-		const accessKeyId = legacy.accessKeyId;
-		if (typeof accessKeyId === 'string' && accessKeyId && !settings.accessKeyIdSecret) {
+		const { accessKeyId, secretAccessKey, savedPassphrase } = legacy;
+		const current = this.getCredentials(settings);
+		const restoreLegacyPair = typeof accessKeyId === 'string' && !!accessKeyId &&
+			typeof secretAccessKey === 'string' && !!secretAccessKey &&
+			(!current.accessKeyId || !current.secretAccessKey);
+		if (typeof accessKeyId === 'string' && accessKeyId &&
+			(!current.accessKeyId || (restoreLegacyPair && current.accessKeyId !== accessKeyId))) {
 			settings.accessKeyIdSecret = this.storeUnderFreeId(DEFAULT_ACCESS_KEY_ID_SECRET, accessKeyId);
 		}
 
-		const secretAccessKey = legacy.secretAccessKey;
-		if (typeof secretAccessKey === 'string' && secretAccessKey && !settings.secretAccessKeySecret) {
+		if (typeof secretAccessKey === 'string' && secretAccessKey &&
+			(!current.secretAccessKey || (restoreLegacyPair && current.secretAccessKey !== secretAccessKey))) {
 			settings.secretAccessKeySecret = this.storeUnderFreeId(DEFAULT_SECRET_ACCESS_KEY_SECRET, secretAccessKey);
 		}
 
-		const savedPassphrase = legacy.savedPassphrase;
-		if (typeof savedPassphrase === 'string' && savedPassphrase && settings.rememberPassphrase) {
-			this.setPassphrase(savedPassphrase);
+		if (typeof savedPassphrase === 'string' && savedPassphrase && settings.rememberPassphrase && !this.getPassphrase()) {
+			this.storeAndVerify(PASSPHRASE_SECRET_ID, savedPassphrase);
 		}
 
 		for (const key of LEGACY_KEYS) {
@@ -138,10 +145,19 @@ export class SecretVault {
 		let id = baseId;
 		for (let n = 2; ; n++) {
 			const existing = this.store.getSecret(id);
-			if (!existing || existing === value) break;
+			if (existing === value) return id;
+			if (!existing) break;
 			id = `${baseId}-${n}`;
 		}
-		this.store.setSecret(id, value);
+		this.storeAndVerify(id, value);
 		return id;
+	}
+
+	/** Verify that the replacement is readable before the caller discards legacy data. */
+	private storeAndVerify(id: string, value: string): void {
+		this.store.setSecret(id, value);
+		if (this.store.getSecret(id) !== value) {
+			throw new Error('Obsidian could not save a migrated secret');
+		}
 	}
 }

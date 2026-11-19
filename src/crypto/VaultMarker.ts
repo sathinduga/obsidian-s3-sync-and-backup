@@ -43,14 +43,10 @@ export class VaultMarker {
     }
 
     /**
-     * Check if vault marker exists (vault is encrypted)
+     * Return whether the marker exists; propagate connection and permission failures.
      */
     async exists(): Promise<boolean> {
-        try {
-            return await this.s3Provider.fileExists(this.getMarkerKey());
-        } catch {
-            return false;
-        }
+        return await this.s3Provider.fileExists(this.getMarkerKey());
     }
 
     /**
@@ -129,28 +125,25 @@ export class VaultMarker {
     }
 
     /**
-     * Get marker metadata without verifying passphrase
+     * Read marker metadata without verifying the passphrase.
+     * Connection and parse failures propagate so callers can block sync safely.
      */
-    async getMetadata(): Promise<Omit<VaultEncryptionMarker, 'verificationToken'> | null> {
-        try {
-            const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
-            const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
+    async getMetadata(): Promise<Omit<VaultEncryptionMarker, 'verificationToken'>> {
+        const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
+        const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
 
-            return {
-                version: marker.version,
-                salt: marker.salt,
-                state: marker.state ?? 'enabled',
-                fromMode: marker.fromMode,
-                targetMode: marker.targetMode,
-                migrationId: marker.migrationId,
-                createdAt: marker.createdAt,
-                createdBy: marker.createdBy,
-                updatedAt: marker.updatedAt ?? marker.createdAt,
-                updatedBy: marker.updatedBy ?? marker.createdBy,
-            };
-        } catch {
-            return null;
-        }
+        return {
+            version: marker.version,
+            salt: marker.salt,
+            state: marker.state ?? 'enabled',
+            fromMode: marker.fromMode,
+            targetMode: marker.targetMode,
+            migrationId: marker.migrationId,
+            createdAt: marker.createdAt,
+            createdBy: marker.createdBy,
+            updatedAt: marker.updatedAt ?? marker.createdAt,
+            updatedBy: marker.updatedBy ?? marker.createdBy,
+        };
     }
 
     /**

@@ -43,6 +43,7 @@ describe('SecretVault', () => {
 		vault = new SecretVault(store);
 	});
 
+	/** Looks up the two secret references on the current device. */
 	describe('getCredentials', () => {
 		it('resolves the values of the secrets named in settings', () => {
 			store.setSecret('my-key', 'AKIA');
@@ -60,6 +61,7 @@ describe('SecretVault', () => {
 		});
 	});
 
+	/** Covers remembering and forgetting the local passphrase. */
 	describe('passphrase', () => {
 		it('round-trips under the fixed secret ID', () => {
 			vault.setPassphrase('correct horse');
@@ -80,6 +82,7 @@ describe('SecretVault', () => {
 		});
 	});
 
+	/** Covers legacy-only and restored settings, plus failures before JSON cleanup. */
 	describe('migrateLegacySettings', () => {
 		it('does nothing and reports no change when no legacy keys exist', () => {
 			const settings = { ...DEFAULT_SETTINGS };
@@ -137,14 +140,59 @@ describe('SecretVault', () => {
 			expect(settings.accessKeyIdSecret).toBe(DEFAULT_ACCESS_KEY_ID_SECRET);
 		});
 
-		it('keeps an already selected secret name and only strips the legacy key', () => {
+		it('keeps a selected secret that resolves successfully', () => {
+			store.setSecret('chosen', 'current');
 			const settings = legacySettings({ accessKeyId: 'AKIA', accessKeyIdSecret: 'chosen' });
 
 			vault.migrateLegacySettings(settings);
 
 			expect(settings.accessKeyIdSecret).toBe('chosen');
-			expect(store.data.size).toBe(0);
+			expect(vault.getCredentials(settings).accessKeyId).toBe('current');
 			expect(settings).not.toHaveProperty('accessKeyId');
+		});
+
+		it('uses the legacy credential pair when one selected secret is missing', () => {
+			store.setSecret('chosen-secret', 'different-secret');
+			const settings = legacySettings({
+				accessKeyId: 'legacy-id', secretAccessKey: 'legacy-secret',
+				accessKeyIdSecret: 'missing-id', secretAccessKeySecret: 'chosen-secret',
+			});
+
+			vault.migrateLegacySettings(settings);
+
+			expect(vault.getCredentials(settings)).toEqual({ accessKeyId: 'legacy-id', secretAccessKey: 'legacy-secret' });
+			expect(settings).not.toHaveProperty('accessKeyId');
+			expect(settings).not.toHaveProperty('secretAccessKey');
+			expect(store.getSecret('chosen-secret')).toBe('different-secret');
+		});
+
+		it('preserves a remembered local passphrase when the legacy value differs', () => {
+			store.setSecret(PASSPHRASE_SECRET_ID, 'current-passphrase');
+			const settings = legacySettings({ rememberPassphrase: true, savedPassphrase: 'old-passphrase' });
+
+			vault.migrateLegacySettings(settings);
+
+			expect(vault.getPassphrase()).toBe('current-passphrase');
+			expect(settings).not.toHaveProperty('savedPassphrase');
+		});
+
+		it('keeps the legacy fields when a secret cannot be read back and reuses successful writes on retry', () => {
+			const saved = { accessKeyId: 'AKIA', secretAccessKey: 'legacy-secret' };
+			const settings = legacySettings(saved);
+			const write = store.setSecret.bind(store);
+			const setSecret = jest.spyOn(store, 'setSecret').mockImplementation((id, value) => {
+				if (id === DEFAULT_ACCESS_KEY_ID_SECRET) write(id, value);
+			});
+			try {
+				expect(() => vault.migrateLegacySettings(settings)).toThrow('could not save');
+				expect(settings).toMatchObject(saved);
+			} finally {
+				setSecret.mockRestore();
+			}
+			const retry = legacySettings(saved);
+			expect(vault.migrateLegacySettings(retry)).toBe(true);
+			expect(vault.getCredentials(retry)).toEqual(saved);
+			expect(store.data.size).toBe(2);
 		});
 
 		it('is idempotent', () => {
