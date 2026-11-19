@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.1.1](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/5.1.0...5.1.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **sync:** keep vault configuration out of file transfers ([845c6fa](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/845c6fa702e1eb1fccca0b54d57617532949693a))
+* **sync:** keep vault configuration out of file transfers ([8dca25c](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/8dca25cdc671674dcbd751a87d72471b4dace697))
+
 ## [5.1.0](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/5.0.1...5.1.0) (2026-11-19)
 
 
