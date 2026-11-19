@@ -115,3 +115,10 @@
 	text-align: center;
 	margin-top: 0.5rem;
 }
+
+/* The encryption controls share one searchable setting and manage their own layout. */
+.setting-item.s3-sync-settings-form {
+	display: block;
+	padding: 0;
+	border: 0;
+}
