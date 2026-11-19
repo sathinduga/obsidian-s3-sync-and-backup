@@ -310,25 +310,28 @@ describe('BackupDownloader', () => {
 	 * Covers browser download triggering behavior.
 	 */
 	describe('triggerDownload', () => {
-		it('creates and removes the download link in the focused document', async () => {
+		it('removes the download link from its original document when the click changes focus', async () => {
 			const s3Provider = createMockS3Provider();
 			const downloader = new BackupDownloader(s3Provider as unknown as S3Provider, createTestSettings());
 			const blob = new Blob(['zip-content'], { type: 'application/zip' });
 			jest.spyOn(downloader, 'createDownloadBlob').mockResolvedValue(blob);
 
-			const link = { click: jest.fn() };
-			const removeChildSpy = jest.fn();
-			const createAnchorSpy = jest.fn(() => link);
+			const newlyFocusedBody = { removeChild: jest.fn() };
+			const getActiveDocument = jest.fn();
+			const link = {
+				click: jest.fn(() => {
+					getActiveDocument.mockReturnValue({ body: newlyFocusedBody });
+				}),
+			};
+			const originalBody = {
+				createEl: jest.fn(() => link),
+				removeChild: jest.fn(),
+			};
+			getActiveDocument.mockReturnValue({ body: originalBody });
 			const activeDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'activeDocument');
 			Object.defineProperty(globalThis, 'activeDocument', {
 				configurable: true,
-				writable: true,
-				value: {
-					body: {
-						createEl: createAnchorSpy,
-						removeChild: removeChildSpy,
-					},
-				} as unknown as Document,
+				get: getActiveDocument,
 			});
 
 			const originalCreateObjectURL = URL.createObjectURL;
@@ -349,11 +352,12 @@ describe('BackupDownloader', () => {
 			try {
 				await downloader.triggerDownload('backup-1');
 
-				expect(createAnchorSpy).toHaveBeenCalledWith('a', {
+				expect(originalBody.createEl).toHaveBeenCalledWith('a', {
 					attr: { href: 'blob:backup-1', download: 'backup-1.zip' },
 				});
 				expect(link.click).toHaveBeenCalledTimes(1);
-				expect(removeChildSpy).toHaveBeenCalledWith(link);
+				expect(originalBody.removeChild).toHaveBeenCalledWith(link);
+				expect(newlyFocusedBody.removeChild).not.toHaveBeenCalled();
 				expect(createObjectURLMock).toHaveBeenCalledWith(blob);
 				expect(revokeObjectURLMock).toHaveBeenCalledWith('blob:backup-1');
 			} finally {
