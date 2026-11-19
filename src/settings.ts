@@ -332,9 +332,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	/** Persist the selected secret name and surface failures from Obsidian's settings storage. */
 	private async saveCredentialReference(
 		key: 'accessKeyIdSecret' | 'secretAccessKeySecret',
-		value: string,
+		value: string | null,
 	): Promise<void> {
-		this.plugin.settings[key] = value;
+		// Newer Obsidian versions emit null when the selection is cleared.
+		this.plugin.settings[key] = value ?? '';
 		try {
 			await this.plugin.saveSettings();
 		} catch {

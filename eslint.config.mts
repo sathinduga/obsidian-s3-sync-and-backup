@@ -2,6 +2,7 @@ import tseslint from 'typescript-eslint';
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
 import { globalIgnores } from "eslint/config";
+import { fileURLToPath } from "node:url";
 
 export default tseslint.config(
 	{
@@ -19,11 +20,16 @@ export default tseslint.config(
 			parserOptions: {
 				projectService: {
 					allowDefaultProject: [
-						'eslint.config.js',
-						'manifest.json'
+						// These linted files live outside the plugin's TypeScript project.
+						'eslint.config.mts',
+						'jest.config.cjs',
+						'jest.e2e.config.cjs',
+						'jest.integration.config.cjs',
+						'manifest.json',
+						'src/shims/setimmediate.cjs',
 					]
 				},
-				tsconfigRootDir: import.meta.dirname,
+				tsconfigRootDir: fileURLToPath(new URL('.', import.meta.url)),
 				extraFileExtensions: ['.json']
 			},
 		},
