@@ -45,13 +45,14 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
 ### 1. Configure S3 Connection
 1. Open **Settings** → **S3 Sync + Backup**.
 2. Select your provider (**AWS S3**, **Cloudflare R2**, **Backblaze B2**, **RustFS**, or **Other S3-compatible**).
-3. Enter your credentials:
+3. Enter the connection details:
    - **Endpoint URL**: Required for non-AWS providers (e.g. `https://s3.<REGION>.backblazeb2.com` for Backblaze B2).
-   - **Region**: Use `auto` for Cloudflare R2; for Backblaze B2 use the region in your endpoint (e.g. `us-west-004`).
+   - **Region**: AWS S3 and RustFS start with `us-east-1`, and Cloudflare R2 starts with `auto`. Choose the region your bucket or server uses. Backblaze B2 fills the region from a standard endpoint such as `https://s3.us-west-004.backblazeb2.com`. You can also enter it manually. For other S3-compatible services, use the region specified by the service.
    - **Bucket name**: Your S3 bucket.
    - **Access Key ID** & **Secret Access Key**: select an existing secret or create a new one in Obsidian's Keychain. Requires Obsidian 1.11.5 or later for encrypted desktop secret storage. Plugin version 4.2.6 supports Obsidian 1.8.7 and later.
    - **Force Path Style**: Only shown for the **Other S3-compatible** provider — AWS S3, Cloudflare R2, Backblaze B2, and RustFS each use a fixed addressing mode (path-style for R2/B2/RustFS, virtual-hosted for AWS).
-4. Click **Test Connection** to verify credentials and bucket access.
+4. Click **Test connection** to verify credentials and bucket access. The test uses the values currently in the form.
+5. Click **Save connection** to use the new connection for sync and backup. Switching providers, discarding changes, or leaving Settings restores the saved connection when you return to it. If your saved connection uses vault encryption, the new destination must already have vault encryption enabled. Sync and backup stay paused across retries and restarts until the new destination's marker verifies the passphrase. If the marker is missing, restore it at the destination before unlocking in **Encryption**.
 
 ### 2. Enable Sync
 1. In the **Sync** section, toggle **Enable sync** (on by default).
@@ -133,12 +134,14 @@ On Obsidian 1.13.0 and later, use Settings search to find plugin options such as
 | :--- | :--- |
 | **Provider** | Storage provider: AWS S3, Cloudflare R2, Backblaze B2, RustFS, or Other S3-compatible. |
 | **Endpoint URL** | S3-compatible endpoint URL. Required for non-AWS providers (e.g., `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` for R2, `https://s3.<REGION>.backblazeb2.com` for Backblaze B2, `http://localhost:9000` for RustFS). Hidden when provider is AWS. |
-| **Region** | AWS region (e.g., `us-east-1`). Use `auto` for Cloudflare R2; for Backblaze B2 use the region in your endpoint (e.g., `us-west-004`). |
+| **Region** | Editable region for the selected provider. New AWS S3 and RustFS connections start with `us-east-1`, and Cloudflare R2 starts with `auto`. Backblaze B2 can fill the region from its endpoint. Other S3-compatible services use their own region setting. |
 | **Bucket** | Name of your S3 bucket. |
 | **Access key ID** | Secret (from Obsidian's secret storage) holding your S3 access key ID. |
 | **Secret access key** | Secret (from Obsidian's secret storage) holding your S3 secret access key. |
 | **Force path style** | Use path-style URLs instead of virtual-hosted. Required for some self-hosted S3-compatible endpoints. Only shown for the **Other S3-compatible** provider — AWS, R2, B2, and RustFS each pin a fixed addressing mode internally. |
-| **Test connection** | Verify credentials, bucket access, and required permissions. |
+| **Test connection** | Check the displayed connection's credentials and bucket access without saving. |
+| **Save connection** | Apply the displayed connection after current syncs, backups, and ZIP exports finish. |
+| **Discard changes** | Restore the saved connection. |
 
 ### Encryption
 

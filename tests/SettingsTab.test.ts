@@ -1,12 +1,12 @@
 /** Tests the shared settings rows through the modern definition and legacy display APIs. */
-import { App, requireApiVersion, Setting, type SettingDefinitionRender } from 'obsidian';
+import { App, requireApiVersion, SecretComponent, Setting, type SettingDefinitionRender } from 'obsidian';
 import type S3SyncBackupPlugin from '../src/main';
 import { S3SyncBackupSettingTab } from '../src/settings';
 import { DEFAULT_SETTINGS } from '../src/types';
 
 jest.mock('obsidian', () => ({
 	...jest.requireActual('obsidian'),
-	PluginSettingTab: class {},
+	PluginSettingTab: class { hide() {} },
 	requireApiVersion: jest.fn(),
 	SecretComponent: jest.fn(),
 	Setting: jest.fn(),
@@ -23,7 +23,8 @@ function mockSetting() {
 		setWarning: jest.fn().mockReturnThis(),
 		setDisabled: jest.fn().mockReturnThis(),
 		addOption: jest.fn().mockReturnThis(),
-		onChange: jest.fn<void, [(value: string | boolean) => void | Promise<void>]>(),
+		buttonEl: { textContent: '', disabled: false, isConnected: true },
+		onChange: jest.fn<void, [(value: string | boolean | null) => void | Promise<void>]>(),
 		onClick: jest.fn<void, [() => void | Promise<void>]>(),
 	};
 	const setting = {
@@ -49,6 +50,10 @@ function mockSetting() {
 			return setting;
 		});
 	}
+	setting.addComponent.mockImplementation((create: (element: HTMLElement) => unknown) => {
+		create({} as HTMLElement);
+		return setting;
+	});
 	return { setting, control };
 }
 
@@ -67,6 +72,8 @@ function createTab() {
 	const plugin = {
 		settings,
 		saveSettings: jest.fn().mockResolvedValue(undefined),
+		saveConnection: jest.fn(),
+		testConnection: jest.fn().mockResolvedValue('Connected'),
 		onSettingsChanged: jest.fn(),
 		resumeStartupJobs: jest.fn(),
 		secrets: {
@@ -86,11 +93,20 @@ function modernRows(tab: S3SyncBackupSettingTab) {
 		.filter((row): row is SettingDefinitionRender => 'render' in row && typeof row.render === 'function');
 }
 
+function renderRow(tab: S3SyncBackupSettingTab, name: string) {
+	const row = modernRows(tab).find((item) => item.name === name);
+	if (!row) throw new Error(`Missing settings row: ${name}`);
+	const { setting, control } = mockSetting();
+	row.render(setting as unknown as Setting, {} as Parameters<typeof row.render>[1]);
+	return control;
+}
+
 /** Search metadata and both renderers must share the settings and their lifecycle callbacks. */
 describe('S3 Sync + Backup settings', () => {
 	beforeEach(() => {
 		jest.clearAllMocks();
 		jest.mocked(Setting).mockImplementation(() => mockSetting().setting as unknown as Setting);
+		jest.mocked(SecretComponent).mockImplementation(() => mockSetting().control as unknown as SecretComponent);
 	});
 
 	it('indexes only available rows and leaves credentials and persisted settings alone', () => {
@@ -107,6 +123,111 @@ describe('S3 Sync + Backup settings', () => {
 		expect(JSON.stringify(rows)).not.toContain(plugin.settings.secretAccessKeySecret);
 		expect(Setting).not.toHaveBeenCalled();
 		expect(plugin.saveSettings).not.toHaveBeenCalled();
+	});
+
+	it('restores the saved AWS connection after previewing Cloudflare without saving', async () => {
+		jest.mocked(requireApiVersion).mockReturnValue(true);
+		const { tab, plugin } = createTab();
+		plugin.settings.region = 'eu-west-2';
+		plugin.settings.bucket = 'existing-aws-bucket';
+		const saved = { ...plugin.settings };
+
+		await renderRow(tab, 'Provider').onChange.mock.calls[0]![0]('r2');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('auto');
+		expect(renderRow(tab, 'Bucket').setValue).toHaveBeenCalledWith('');
+		expect(plugin.settings).toEqual(saved);
+
+		await renderRow(tab, 'Provider').onChange.mock.calls[0]![0]('aws');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('eu-west-2');
+		expect(renderRow(tab, 'Bucket').setValue).toHaveBeenCalledWith('existing-aws-bucket');
+		expect(plugin.settings).toEqual(saved);
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+	});
+
+	it('keeps connection edits in the form until save and retains the draft after a failed save', async () => {
+		const { tab, plugin } = createTab();
+		plugin.saveConnection.mockRejectedValueOnce(new Error('Could not write settings'))
+			.mockImplementation((connection: object) => Object.assign(plugin.settings, connection));
+		const saved = { ...plugin.settings };
+
+		await renderRow(tab, 'Provider').onChange.mock.calls[0]![0]('custom');
+		await renderRow(tab, 'Endpoint URL').onChange.mock.calls[0]![0]('https://storage.example.com');
+		await renderRow(tab, 'Region').onChange.mock.calls[0]![0]('custom-region');
+		await renderRow(tab, 'Bucket').onChange.mock.calls[0]![0]('test-bucket');
+		await renderRow(tab, 'Force path style').onChange.mock.calls[0]![0](true);
+		expect(plugin.settings).toEqual(saved);
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+		const save = () => renderRow(tab, 'Connection changes').onClick.mock.calls[0]![0]();
+		await save();
+		expect(plugin.settings).toEqual(saved);
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('custom-region');
+		await save();
+		expect(plugin.settings).toEqual({
+			...saved,
+			provider: 'custom', endpoint: 'https://storage.example.com', region: 'custom-region', bucket: 'test-bucket',
+			accessKeyIdSecret: '', secretAccessKeySecret: '', forcePathStyle: true,
+		});
+	});
+
+	it('derives a Backblaze region as the endpoint changes until the user enters a manual override', async () => {
+		const { tab } = createTab();
+		const change = async (row: string, value: string) => renderRow(tab, row).onChange.mock.calls[0]![0](value);
+		await change('Provider', 'b2');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('');
+		await change('Endpoint URL', 'https://s3.us-west-004.backblazeb2.com');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('us-west-004');
+		await change('Endpoint URL', 'https://s3.eu-central-003.backblazeb2.com.example.com');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('');
+		await change('Endpoint URL', 'https://s3.eu-central-003.backblazeb2.com');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('eu-central-003');
+		await change('Region', 'us-west-004');
+		await change('Endpoint URL', 'https://s3.us-east-005.backblazeb2.com');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('us-west-004');
+	});
+
+	it('tests unsaved settings without sending saved credentials to another provider', async () => {
+		const { tab, plugin } = createTab();
+		await renderRow(tab, 'Provider').onChange.mock.calls[0]![0]('r2');
+		await renderRow(tab, 'Endpoint URL').onChange.mock.calls[0]![0]('https://test.r2.cloudflarestorage.com');
+		await renderRow(tab, 'Test connection').onClick.mock.calls[0]![0]();
+		expect(plugin.testConnection).toHaveBeenCalledWith({
+			provider: 'r2', endpoint: 'https://test.r2.cloudflarestorage.com', region: 'auto', bucket: '',
+			accessKeyIdSecret: '', secretAccessKeySecret: '', forcePathStyle: false,
+		});
+		expect(plugin.saveConnection).not.toHaveBeenCalled();
+		expect(plugin.settings.provider).toBe('aws');
+	});
+
+	it('leaves saved SecretStorage references in place when a draft selection is cleared or discarded', async () => {
+		const { tab, plugin } = createTab();
+		const selected = mockSetting().control;
+		jest.mocked(SecretComponent).mockReturnValueOnce(selected as unknown as SecretComponent);
+		renderRow(tab, 'Access key ID');
+		expect(selected.setValue).toHaveBeenCalledWith('existing-access-key');
+		await selected.onChange.mock.calls[0]![0](null);
+		await renderRow(tab, 'Test connection').onClick.mock.calls[0]![0]();
+		expect(plugin.testConnection).toHaveBeenCalledWith(expect.objectContaining({ accessKeyIdSecret: '' }));
+		expect(plugin.settings.accessKeyIdSecret).toBe('existing-access-key');
+		await renderRow(tab, 'Connection changes').onClick.mock.calls[1]![0]();
+
+		const restored = mockSetting().control;
+		jest.mocked(SecretComponent).mockReturnValueOnce(restored as unknown as SecretComponent);
+		renderRow(tab, 'Access key ID');
+		expect(restored.setValue).toHaveBeenCalledWith('existing-access-key');
+		expect(plugin.saveSettings).not.toHaveBeenCalled();
+		expect(plugin.saveConnection).not.toHaveBeenCalled();
+	});
+
+	it('restores the saved connection when the settings tab closes', async () => {
+		const { tab, plugin } = createTab();
+		await renderRow(tab, 'Provider').onChange.mock.calls[0]![0]('rustfs');
+		expect(renderRow(tab, 'Region').setValue).toHaveBeenCalledWith('us-east-1');
+		await renderRow(tab, 'Endpoint URL').onChange.mock.calls[0]![0]('http://localhost:9000');
+		tab.hide();
+		expect(renderRow(tab, 'Provider').setValue).toHaveBeenCalledWith('aws');
+		expect(modernRows(tab).some((row) => row.name === 'Endpoint URL')).toBe(false);
+		expect(plugin.saveConnection).not.toHaveBeenCalled();
 	});
 
 	it.each([true, false])('saves conditional sync changes before refreshing (modern=%s)', async (modern) => {
@@ -129,12 +250,14 @@ describe('S3 Sync + Backup settings', () => {
 		expect(modernRows(tab).some(({ name }) => name === 'Sync on startup')).toBe(true);
 	});
 
-	it('keeps passphrase entry and unlock together when opened from search', async () => {
+	it.each(['locked vault', 'unconfirmed connection'])('keeps passphrase entry and unlock together for a %s', async (which) => {
 		jest.mocked(requireApiVersion).mockReturnValue(true);
 		const { tab, plugin, update } = createTab();
+		const pending = which === 'unconfirmed connection';
+		Object.assign(plugin.settings, { pendingEncryptedConnection: pending });
 		const unlock = jest.fn().mockResolvedValue(true);
 		plugin.getEncryptionCoordinator.mockReturnValue({
-			getState: () => ({ remoteMode: 'encrypted', hasKey: false }),
+			getState: () => ({ remoteMode: pending ? 'plaintext' : 'encrypted', hasKey: false }),
 			unlock,
 		});
 		const form = modernRows(tab).find(({ name }) => name === 'End-to-end encryption');

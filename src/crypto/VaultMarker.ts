@@ -94,13 +94,15 @@ export class VaultMarker {
      * Verify passphrase against existing marker
      *
      * @param passphrase - Passphrase to verify
+     * @param requireEnabled - Require an enabled marker to confirm a new connection.
      * @returns The derived encryption key if valid, null if invalid
      */
-    async verify(passphrase: string): Promise<Uint8Array | null> {
+    async verify(passphrase: string, requireEnabled = false): Promise<Uint8Array | null> {
         try {
             // Download marker
             const markerJson = await this.s3Provider.downloadFileAsText(this.getMarkerKey());
             const marker = JSON.parse(markerJson) as VaultEncryptionMarker;
+            if (requireEnabled && marker.state !== undefined && marker.state !== 'enabled') return null;
 
             // Derive key with stored salt
             const salt = base64ToBytes(marker.salt);

@@ -1,5 +1,29 @@
+/** Tests vault marker verification and per-vault device IDs. */
 import { App } from 'obsidian';
-import { generateDeviceId, getOrCreateDeviceId } from '../../src/crypto/VaultMarker';
+import { generateDeviceId, getOrCreateDeviceId, VaultMarker } from '../../src/crypto/VaultMarker';
+import type { S3Provider } from '../../src/storage/S3Provider';
+import type { VaultEncryptionMarker } from '../../src/types';
+
+/** Confirm a new connection using the same marker document that verifies the passphrase. */
+describe('VaultMarker.verify', () => {
+	it('requires enabled encryption for a new connection and accepts markers from earlier releases', async () => {
+		let stored = '';
+		const provider = {
+			uploadFile: jest.fn(async (_key: string, body: string) => { stored = body; }),
+			downloadFileAsText: jest.fn(async () => stored),
+		} as unknown as S3Provider;
+		const marker = new VaultMarker(provider, 'vault');
+		const passphrase = 'fixture passphrase';
+		const key = await marker.create(passphrase, 'fixture-device');
+
+		await expect(marker.verify(passphrase, true)).resolves.toBeNull();
+		await expect(marker.verify(passphrase)).resolves.toEqual(key);
+
+		const { state: _state, ...legacyMarker } = JSON.parse(stored) as VaultEncryptionMarker;
+		stored = JSON.stringify(legacyMarker);
+		await expect(marker.verify(passphrase, true)).resolves.toEqual(key);
+	});
+});
 
 describe('generateDeviceId', () => {
 	it('returns a string with "device-" prefix and 16 hex characters', () => {

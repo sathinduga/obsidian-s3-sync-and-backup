@@ -272,9 +272,20 @@ export function validateConnectionSettings(
         errors.push('Other S3-compatible provider requires an endpoint URL');
     }
 
-    // AWS requires region
-    if (settings.provider === 'aws' && !settings.region) {
-        errors.push('AWS S3 requires a region');
+    if (settings.provider !== 'aws' && settings.endpoint) {
+        try {
+            const url = new URL(settings.endpoint);
+            if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) {
+                errors.push('Enter an HTTP or HTTPS endpoint URL without credentials');
+            }
+        } catch {
+            errors.push('Enter an HTTP or HTTPS endpoint URL without credentials');
+        }
+    }
+
+    if (!settings.region) {
+        if (settings.provider === 'aws') errors.push('AWS S3 requires a region');
+        if (settings.provider === 'b2') errors.push('Backblaze B2 requires a region');
     }
 
     return errors;

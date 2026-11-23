@@ -282,6 +282,31 @@ describe('BackupDownloader', () => {
 	 * Covers ZIP archive assembly for downloaded backups.
 	 */
 	describe('createDownloadBlob', () => {
+		it('tracks all concurrent ZIPs until each archive succeeds or fails', async () => {
+			const s3Provider = createMockS3Provider();
+			let failFirst!: (error: Error) => void;
+			let finishSecond!: (manifest: string) => void;
+			const manifest = JSON.stringify(createManifest());
+			s3Provider.downloadFileAsText
+				.mockReturnValueOnce(new Promise((_, reject) => { failFirst = reject; }))
+				.mockReturnValueOnce(new Promise((resolve) => { finishSecond = resolve; }))
+				.mockResolvedValue(manifest);
+			s3Provider.listObjects.mockResolvedValue([]);
+			const downloader = new BackupDownloader(s3Provider as unknown as S3Provider, createTestSettings());
+
+			const first = downloader.createDownloadBlob('backup-1');
+			const second = downloader.createDownloadBlob('backup-2');
+			expect(downloader.isExporting()).toBe(true);
+
+			failFirst(new Error('Manifest unavailable'));
+			await expect(first).rejects.toThrow('Manifest unavailable');
+			expect(downloader.isExporting()).toBe(true);
+
+			finishSecond(manifest);
+			await expect(second).resolves.toBeInstanceOf(Blob);
+			expect(downloader.isExporting()).toBe(false);
+		});
+
 		it('packages downloaded files and the manifest into a ZIP blob', async () => {
 			const s3Provider = createMockS3Provider();
 			const manifest = createManifest({ encrypted: true });

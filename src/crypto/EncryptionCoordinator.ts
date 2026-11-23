@@ -46,6 +46,8 @@ import { readVaultFile } from '../utils/vaultFiles';
  * pause/resume schedulers and persist settings without circular imports.
  */
 export interface EncryptionCoordinatorCallbacks {
+	/** Avoid starting a migration while a connection save is in progress. */
+	canStartMigration?: () => boolean;
 	saveSettings: () => Promise<void>;
 	pauseSchedulers: () => void;
 	resumeSchedulers: () => void;
@@ -61,6 +63,7 @@ export class EncryptionCoordinator {
 	/** A failed marker read leaves the remote format unverified until a successful retry. */
 	private remoteCheckFailed = false;
 	private isBusy = false;
+	private confirmingConnection = false;
 	private vaultMarker: VaultMarker;
 	private syncLease: SyncLease;
 
@@ -73,6 +76,7 @@ export class EncryptionCoordinator {
 		private backupDownloader: BackupDownloader,
 		private settings: S3SyncBackupSettings,
 		private deviceId: string,
+		private readonly saveEncryptionConfirmation?: (destination: string, onSaved: () => void) => Promise<void>,
 	) {
 		this.vaultMarker = new VaultMarker(s3Provider, settings.syncPrefix);
 		this.syncLease = new SyncLease(s3Provider, settings.syncPrefix);
@@ -82,7 +86,7 @@ export class EncryptionCoordinator {
 		return {
 			remoteMode: this.remoteMode,
 			hasKey: this.encryptionKey !== null,
-			isBusy: this.isBusy,
+			isBusy: this.isBusy || this.confirmingConnection,
 		};
 	}
 
@@ -93,6 +97,7 @@ export class EncryptionCoordinator {
 	 * - A migration is in progress locally
 	 * - The remote marker could not be read or is in a transitioning state
 	 * - Encryption is enabled remotely but no key is loaded
+	 * - A saved connection still needs to verify its encryption marker and passphrase
 	 */
 	shouldBlock(): boolean {
 		return this.getBlockReason() !== null;
@@ -102,6 +107,11 @@ export class EncryptionCoordinator {
 		if (this.isBusy) return 'Encryption migration in progress';
 		if (this.remoteCheckFailed) return 'Unable to verify the remote vault encryption state';
 		if (this.remoteMode === 'transitioning') return 'Encryption state transition in progress on another device';
+		if (this.settings.pendingEncryptedConnection) {
+			return this.remoteMode === 'encrypted'
+				? 'Unlock the vault in settings to verify encryption for the saved destination'
+				: 'Restore the encryption marker at the saved destination, then unlock the vault in settings';
+		}
 		if (this.remoteMode === 'encrypted' && this.encryptionKey === null) {
 			return 'Vault is encrypted — enter passphrase in settings to unlock';
 		}
@@ -113,15 +123,24 @@ export class EncryptionCoordinator {
 	 *
 	 * Called on plugin startup and before manual sync.
 	 * If the remote marker indicates encryption but the local setting disagrees,
-	 * the local setting is auto-aligned (multi-device detection).
+	 * the local setting is auto-aligned (multi-device detection). A pending
+	 * connection keeps its encryption requirement while the marker is absent.
+	 * @param saveSettings - Persist a change to the observed encryption mode.
 	 */
 	async refreshRemoteMode(saveSettings: () => Promise<void>): Promise<void> {
+		if (this.confirmingConnection) return;
+		const destination = computeDestinationFingerprint(this.settings);
+		const pending = this.settings.pendingEncryptedConnection;
+		const isCurrentCheck = () => !this.confirmingConnection && pending === this.settings.pendingEncryptedConnection &&
+			computeDestinationFingerprint(this.settings) === destination;
+		const marker = this.vaultMarker;
 		try {
-			const markerExists = await this.vaultMarker.exists();
+			const markerExists = await marker.exists();
+			if (!isCurrentCheck()) return;
 
 			if (!markerExists) {
 				this.remoteMode = 'plaintext';
-				if (this.settings.encryptionEnabled) {
+				if (this.settings.encryptionEnabled && !pending) {
 					this.settings.encryptionEnabled = false;
 					await saveSettings();
 				}
@@ -129,7 +148,8 @@ export class EncryptionCoordinator {
 				return;
 			}
 
-			const metadata = await this.vaultMarker.getMetadata();
+			const metadata = await marker.getMetadata();
+			if (!isCurrentCheck()) return;
 			if (metadata.state === 'transitioning') {
 				this.remoteMode = 'transitioning';
 			} else {
@@ -142,6 +162,7 @@ export class EncryptionCoordinator {
 			}
 			this.remoteCheckFailed = false;
 		} catch (error) {
+			if (!isCurrentCheck()) return;
 			this.remoteCheckFailed = true;
 			console.error('[Encryption] Failed to refresh remote mode:', error);
 		}
@@ -151,16 +172,39 @@ export class EncryptionCoordinator {
 	 * Unlock the vault with a passphrase (for existing encrypted vaults).
 	 *
 	 * Verifies the passphrase against the vault marker, then propagates the
-	 * derived key to all consumers.
+	 * derived key to all consumers. A pending connection requires an enabled
+	 * marker and a successful settings write before the key is activated.
+	 * @param passphrase - Passphrase for the active destination's marker.
 	 *
 	 * @returns true if passphrase was correct and key was set.
 	 */
 	async unlock(passphrase: string): Promise<boolean> {
-		const key = await this.vaultMarker.verify(passphrase);
-		if (!key) return false;
+		if (this.confirmingConnection) return false;
+		const destination = computeDestinationFingerprint(this.settings);
+		const pending = this.settings.pendingEncryptedConnection === true;
+		this.confirmingConnection = pending;
+		try {
+			// The sync prefix can be edited while its settings write is still queued.
+			const marker = pending ? new VaultMarker(this.s3Provider, this.settings.syncPrefix) : this.vaultMarker;
+			const key = await marker.verify(passphrase, pending);
+			if (!key || computeDestinationFingerprint(this.settings) !== destination) return false;
 
-		this.propagateKey(key);
-		return true;
+			if (pending) {
+				if (!this.saveEncryptionConfirmation) throw new Error('Unable to save the connection encryption confirmation');
+				await this.saveEncryptionConfirmation(destination, () => {
+					this.settings.pendingEncryptedConnection = false;
+					this.settings.encryptionEnabled = true;
+					this.remoteMode = 'encrypted';
+					this.remoteCheckFailed = false;
+					this.propagateKey(key);
+				});
+			} else {
+				this.propagateKey(key);
+			}
+			return true;
+		} finally {
+			this.confirmingConnection = false;
+		}
 	}
 
 	/**
@@ -204,6 +248,12 @@ export class EncryptionCoordinator {
 			return { success: false, error: validation.message };
 		}
 
+		if (callbacks.canStartMigration?.() === false) {
+			return { success: false, error: 'Wait for the connection save to finish before changing encryption' };
+		}
+		if (this.settings.pendingEncryptedConnection) {
+			return { success: false, error: 'Restore the encryption marker at the saved destination and unlock before changing encryption' };
+		}
 		if (this.isBusy) {
 			return { success: false, error: 'Migration already in progress' };
 		}
@@ -259,6 +309,9 @@ export class EncryptionCoordinator {
 			return { success: false, error: 'No encryption key loaded — unlock first' };
 		}
 
+		if (callbacks.canStartMigration?.() === false) {
+			return { success: false, error: 'Wait for the connection save to finish before changing encryption' };
+		}
 		if (this.isBusy) {
 			return { success: false, error: 'Migration already in progress' };
 		}
@@ -391,6 +444,13 @@ export class EncryptionCoordinator {
 		this.payloadCodec.updateKey(key);
 		this.snapshotCreator.setEncryptionKey(key);
 		this.backupDownloader.setEncryptionKey(key);
+	}
+
+	/** Forget the previous destination's key until the new marker has been checked. */
+	resetForDestinationChange(): void {
+		this.propagateKey(null);
+		this.remoteMode = 'plaintext';
+		this.remoteCheckFailed = true;
 	}
 
 	updateSettings(settings: S3SyncBackupSettings): void {

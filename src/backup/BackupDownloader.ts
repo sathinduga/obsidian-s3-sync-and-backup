@@ -57,17 +57,28 @@ export class BackupDownloader {
     private settings: S3SyncBackupSettings;
     private encryptionKey: Uint8Array | null = null;
     private normalizedBackupPrefix: string;
+    private activeExports = 0;
 
     /**
      * Creates a new BackupDownloader instance.
      *
      * @param s3Provider - Configured S3 provider used for all download and list operations.
      * @param settings - Current plugin settings. `backupPrefix` and `debugLogging` are consumed.
+     * @param canStartExport - Whether the active connection is available to start a new ZIP export.
      */
-    constructor(s3Provider: S3Provider, settings: S3SyncBackupSettings) {
+    constructor(
+        s3Provider: S3Provider,
+        settings: S3SyncBackupSettings,
+        private readonly canStartExport: () => boolean = () => true,
+    ) {
         this.s3Provider = s3Provider;
         this.settings = settings;
         this.normalizedBackupPrefix = normalizePrefix(settings.backupPrefix);
+    }
+
+    /** Return whether a ZIP is still reading or packaging files, even if its modal has closed. */
+    isExporting(): boolean {
+        return this.activeExports > 0;
     }
 
     /**
@@ -205,17 +216,26 @@ export class BackupDownloader {
      * @throws If any S3 download fails or ZIP generation fails.
      */
     async createDownloadBlob(backupName: string): Promise<Blob> {
-        const files = await this.downloadBackup(backupName);
-        const zip = new JSZip();
-
-        for (const [path, content] of files) {
-            zip.file(path, content);
+        if (!this.canStartExport()) {
+            throw new Error('Wait for the connection save to finish before downloading a backup');
         }
 
-        const manifest = await this.getManifest(backupName);
-        zip.file('.backup-manifest.json', JSON.stringify(manifest, null, 2));
+        this.activeExports++;
+        try {
+            const files = await this.downloadBackup(backupName);
+            const zip = new JSZip();
 
-        return await zip.generateAsync({ type: 'blob' });
+            for (const [path, content] of files) {
+                zip.file(path, content);
+            }
+
+            const manifest = await this.getManifest(backupName);
+            zip.file('.backup-manifest.json', JSON.stringify(manifest, null, 2));
+
+            return await zip.generateAsync({ type: 'blob' });
+        } finally {
+            this.activeExports--;
+        }
     }
 
     /**

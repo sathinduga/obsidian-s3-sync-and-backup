@@ -35,6 +35,9 @@ import {
     BACKUP_INTERVAL_MS,
 } from '../types';
 
+/** Key used to persist the last completed backup alongside the connection. */
+export const LAST_BACKUP_TIME_KEY = 'obsidian-s3-sync-last-backup';
+
 /**
  * Manages automatic backup scheduling, catch-up logic, and manual backup triggering.
  *
@@ -66,14 +69,8 @@ export class BackupScheduler {
 	private onBackupTrigger?: () => Promise<BackupResult | null>;
 	private onBackupComplete?: (result: BackupResult | null) => void;
 
-    /**
-     * Key used to store the last backup timestamp inside `data.json`.
-     *
-     * Obsidian plugins share a single `data.json` file (managed by `plugin.loadData()` /
-     * `plugin.saveData()`). This namespaced key prevents collisions with other stored
-     * plugin data (e.g., sync settings, journal entries).
-     */
-    private readonly LAST_BACKUP_KEY = 'obsidian-s3-sync-last-backup';
+	private canStart?: () => boolean;
+	private persistLastBackupTime?: (time: number) => Promise<void>;
 
     /**
      * Creates a new BackupScheduler instance.
@@ -93,18 +90,24 @@ export class BackupScheduler {
     /**
      * Register the callbacks that the scheduler will invoke during backup lifecycle events.
      *
-     * Both callbacks are optional — if `onBackupTrigger` is not set, `checkAndRunBackup`
+     * All callbacks are optional — if `onBackupTrigger` is not set, `checkAndRunBackup`
      * will do nothing. `onBackupComplete` is useful for updating UI (e.g., status bar).
      *
+     * @param callbacks.canStart - Whether to start a new scheduled backup.
+     * @param callbacks.persistLastBackupTime - Shared writer for the last successful backup timestamp.
      * @param callbacks.onBackupTrigger - Async function that performs the actual backup.
      *   Should return a `BackupResult` on success, or `null`/reject on failure.
      * @param callbacks.onBackupComplete - Called after each backup attempt (successful or
      *   failed) with the `BackupResult`, or `null` if the trigger threw an error.
      */
 	setCallbacks(callbacks: {
+		canStart?: () => boolean;
+		persistLastBackupTime?: (time: number) => Promise<void>;
 		onBackupTrigger?: () => Promise<BackupResult | null>;
 		onBackupComplete?: (result: BackupResult | null) => void;
 	}): void {
+        this.canStart = callbacks.canStart;
+        this.persistLastBackupTime = callbacks.persistLastBackupTime;
         this.onBackupTrigger = callbacks.onBackupTrigger;
         this.onBackupComplete = callbacks.onBackupComplete;
     }
@@ -214,7 +217,7 @@ export class BackupScheduler {
      * On failure, logs the error and calls `onBackupComplete(null)` to notify the UI.
      */
     private async checkAndRunBackup(): Promise<void> {
-        if (!this.settings.backupEnabled) return;
+        if (!this.settings.backupEnabled || this.canStart?.() === false) return;
 
         const intervalMs = BACKUP_INTERVAL_MS[this.settings.backupInterval];
         const now = Date.now();
@@ -312,7 +315,7 @@ export class BackupScheduler {
      * Read the persisted last-backup timestamp from the plugin's `data.json` store.
      *
      * Uses `plugin.loadData()` which reads the entire `data.json` blob. The value is
-     * stored under `LAST_BACKUP_KEY` and must be a number (Unix ms). Any read error or
+     * stored under `LAST_BACKUP_TIME_KEY` and must be a number (Unix ms). Any read error or
      * missing/invalid value results in `lastBackupTime` remaining `null`, which causes
      * the catch-up check to trigger a backup immediately.
      */
@@ -320,8 +323,8 @@ export class BackupScheduler {
         try {
             // Use plugin's loadData for persistence
             const data = await this.plugin.loadData() as Record<string, unknown> | null;
-            if (data && typeof data[this.LAST_BACKUP_KEY] === 'number') {
-                this.lastBackupTime = data[this.LAST_BACKUP_KEY] as number;
+            if (data && typeof data[LAST_BACKUP_TIME_KEY] === 'number') {
+                this.lastBackupTime = data[LAST_BACKUP_TIME_KEY];
             }
         } catch {
             this.lastBackupTime = null;
@@ -337,9 +340,15 @@ export class BackupScheduler {
      * backup on the next startup, which is a safe degraded behaviour.
      */
     private async saveLastBackupTime(): Promise<void> {
+        const time = this.lastBackupTime;
+        if (time === null) return;
         try {
+            if (this.persistLastBackupTime) {
+                await this.persistLastBackupTime(time);
+                return;
+            }
             const data = (await this.plugin.loadData() as Record<string, unknown> | null) ?? {};
-            data[this.LAST_BACKUP_KEY] = this.lastBackupTime;
+            data[LAST_BACKUP_TIME_KEY] = time;
             await this.plugin.saveData(data);
         } catch (error) {
             console.error('[S3 Backup] Failed to save last backup time:', error);
