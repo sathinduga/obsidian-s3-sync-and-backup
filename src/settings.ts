@@ -10,11 +10,12 @@
  */
 
 import { App, Modal, Notice, PluginSettingTab, requireApiVersion, SecretComponent, Setting } from 'obsidian';
-import type { SettingDefinitionGroup, SettingDefinitionRender } from 'obsidian';
+import type { ButtonComponent, SettingDefinitionGroup, SettingDefinitionRender, TextComponent } from 'obsidian';
 import type S3SyncBackupPlugin from './main';
 import type { EncryptionCoordinator } from './crypto/EncryptionCoordinator';
 import {
 	S3ProviderType,
+	type S3ConnectionSettings,
 	S3_PROVIDER_NAMES,
 	SyncIntervalMinutes,
 	BackupInterval,
@@ -42,6 +43,25 @@ const SYNC_INTERVAL_NAMES: Record<SyncIntervalMinutes, string> = {
 	15: '15 minutes',
 	30: '30 minutes',
 };
+
+/** Editable starting regions for a provider without a saved connection. */
+const DEFAULT_REGIONS: Record<S3ProviderType, string> = {
+	aws: DEFAULT_SETTINGS.region,
+	r2: 'auto',
+	b2: '',
+	rustfs: 'us-east-1',
+	custom: '',
+};
+
+/** Extract the region only from Backblaze's standard S3 endpoint hostname. */
+function backblazeEndpointRegion(endpoint: string): string {
+	try {
+		const { hostname } = new URL(endpoint.trim());
+		return /^s3\.([a-z0-9]+(?:-[a-z0-9]+)+)\.backblazeb2\.com$/.exec(hostname)?.[1] ?? '';
+	} catch {
+		return '';
+	}
+}
 
 /** A setting name and description serve both the legacy form and the modern search index. */
 type SettingsRow = Omit<SettingDefinitionRender, 'render'> & { render: (setting: Setting) => void };
@@ -91,6 +111,13 @@ class SettingsSection {
 export class S3SyncBackupSettingTab extends PluginSettingTab {
 	plugin: S3SyncBackupPlugin;
 	private showEncryptionSetup = false;
+	private connectionDraft: S3ConnectionSettings | null = null;
+	private savingConnection = false;
+	private backblazeRegionEdited = false;
+
+	private get connection(): S3ConnectionSettings {
+		return this.connectionDraft ?? this.plugin.settings;
+	}
 
 	/**
 	 * @param app    - The Obsidian application instance.
@@ -114,6 +141,12 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		for (const section of this.getSections()) {
 			section.display(containerEl);
 		}
+	}
+
+	/** Closing or leaving the tab discards unsaved connection edits. */
+	hide(): void {
+		this.discardConnectionDraft();
+		super.hide();
 	}
 
 	private getSections(): SettingsSection[] {
@@ -148,117 +181,161 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		}
 	}
 
-	/**
-	 * Render the Connection settings section.
-	 *
-	 * Renders provider dropdown plus provider-conditional fields: endpoint URL
-	 * (hidden for AWS), force-path-style toggle (shown only for the
-	 * "Other S3-compatible" provider — AWS, R2, and RustFS each have a fixed
-	 * addressing mode driven by `shouldForcePathStyle`, so exposing the toggle
-	 * elsewhere would let users flip a setting that has no effect), and the
-	 * "Test connection" button. Changing the provider calls `this.refreshSettings()`
-	 * to fully re-render so conditional fields appear or disappear immediately.
-	 *
-	 * @param section - Shared rows for the settings section.
-	 */
+	private discardConnectionDraft(): void {
+		this.connectionDraft = null;
+		this.backblazeRegionEdited = false;
+	}
+
+	/** Render an editable connection draft shared by both settings APIs. */
 	private addConnectionSettings(section: SettingsSection): void {
-		// Provider selection
+		const shownProvider = this.connection.provider;
+		let saveButton: ButtonComponent | undefined;
+		let discardButton: ButtonComponent | undefined;
+		let regionInput: TextComponent | undefined;
+		const updateButtons = () => {
+			const disabled = !this.connectionDraft || this.savingConnection;
+			saveButton?.setDisabled(disabled);
+			discardButton?.setDisabled(disabled);
+		};
+		const edit = (changes: Partial<S3ConnectionSettings>) => {
+			if (this.savingConnection || this.connection.provider !== shownProvider) return;
+			const { provider, endpoint, region, bucket, accessKeyIdSecret, secretAccessKeySecret, forcePathStyle } = this.connection;
+			this.connectionDraft = {
+				provider, endpoint, region, bucket, accessKeyIdSecret, secretAccessKeySecret, forcePathStyle, ...changes,
+			};
+			updateButtons();
+		};
+
 		section.add('Provider', 'Select your S3-compatible storage provider', (setting) => {
 			setting.addDropdown((dropdown) => {
-				// Add all provider options
 				for (const [value, name] of Object.entries(S3_PROVIDER_NAMES)) {
 					dropdown.addOption(value, name);
 				}
-				dropdown.setValue(this.plugin.settings.provider);
-				dropdown.onChange(async (value) => {
-					this.plugin.settings.provider = value as S3ProviderType;
-					await this.plugin.saveSettings();
-					// Refresh to show/hide provider-specific fields
+				dropdown.setDisabled(this.savingConnection).setValue(this.connection.provider);
+				dropdown.onChange((value) => {
+					const provider = value as S3ProviderType;
+					if (this.savingConnection || provider === this.connection.provider) return;
+					this.discardConnectionDraft();
+					if (provider !== this.plugin.settings.provider) this.connectionDraft = {
+						provider,
+						endpoint: '',
+						region: DEFAULT_REGIONS[provider],
+						bucket: '',
+						accessKeyIdSecret: '',
+						secretAccessKeySecret: '',
+						forcePathStyle: DEFAULT_SETTINGS.forcePathStyle,
+					};
 					this.refreshSettings();
 				});
 			});
 		});
 
-		// Endpoint URL (shown for non-AWS providers)
-		if (this.plugin.settings.provider !== 'aws') {
-			const endpointDesc = this.getEndpointDescription();
-			section.add('Endpoint URL', endpointDesc, (setting) => {
-				setting.addText((text) => {
-					text.setPlaceholder(this.getEndpointPlaceholder());
-					text.setValue(this.plugin.settings.endpoint);
-					text.onChange(async (value) => {
-						this.plugin.settings.endpoint = value;
-						await this.plugin.saveSettings();
-					});
-				});
+		if (this.connection.provider !== 'aws') {
+			section.add('Endpoint URL', this.getEndpointDescription(), (setting) => {
+				setting.addText((text) => text
+					.setDisabled(this.savingConnection)
+					.setPlaceholder(this.getEndpointPlaceholder())
+					.setValue(this.connection.endpoint)
+					.onChange((endpoint) => {
+						if (this.savingConnection) return;
+						const current = this.connection;
+						if (current.provider === 'b2' && !this.backblazeRegionEdited &&
+							(!current.region || current.region === backblazeEndpointRegion(current.endpoint))) {
+							const region = backblazeEndpointRegion(endpoint);
+							edit({ endpoint, region });
+							regionInput?.setValue(region);
+							return;
+						}
+						edit({ endpoint });
+					}));
 			});
 		}
 
-		// Region
 		section.add('Region', this.getRegionDescription(), (setting) => {
 			setting.addText((text) => {
-				text.setPlaceholder(this.getRegionPlaceholder());
-				text.setValue(this.plugin.settings.region);
-				text.onChange(async (value) => {
-					this.plugin.settings.region = value;
-					await this.plugin.saveSettings();
-				});
+				regionInput = text.setDisabled(this.savingConnection)
+					.setPlaceholder(this.getRegionPlaceholder())
+					.setValue(this.connection.region)
+					.onChange((region) => {
+						if (this.savingConnection) return;
+						this.backblazeRegionEdited = this.connection.provider === 'b2' && !!region.trim();
+						edit({ region });
+					});
 			});
 		});
 
-		// Bucket name
 		section.add('Bucket', 'Name of your S3 bucket', (setting) => {
-			setting.addText((text) => {
-				text.setPlaceholder('Bucket name');
-				text.setValue(this.plugin.settings.bucket);
-				text.onChange(async (value) => {
-					this.plugin.settings.bucket = value;
-					await this.plugin.saveSettings();
-				});
-			});
+			setting.addText((text) => text
+				.setDisabled(this.savingConnection)
+				.setPlaceholder('Bucket name')
+				.setValue(this.connection.bucket)
+				.onChange((bucket) => edit({ bucket })));
 		});
 
-		// Access Key ID
 		section.add('Access key ID', 'Select or create a secret holding your S3 access key ID', (setting) => {
 			setting.addComponent((el) => new SecretComponent(this.app, el)
-				.setValue(this.plugin.settings.accessKeyIdSecret)
-				.onChange(async (value) => {
-					await this.saveCredentialReference('accessKeyIdSecret', value);
-				}));
+				.setDisabled(this.savingConnection)
+				.setValue(this.connection.accessKeyIdSecret)
+				.onChange((value) => edit({ accessKeyIdSecret: value ?? '' })));
 		});
 
-		// Secret Access Key
 		section.add('Secret access key', 'Select or create a secret holding your S3 secret access key', (setting) => {
 			setting.addComponent((el) => new SecretComponent(this.app, el)
-				.setValue(this.plugin.settings.secretAccessKeySecret)
-				.onChange(async (value) => {
-					await this.saveCredentialReference('secretAccessKeySecret', value);
-				}));
+				.setDisabled(this.savingConnection)
+				.setValue(this.connection.secretAccessKeySecret)
+				.onChange((value) => edit({ secretAccessKeySecret: value ?? '' })));
 		});
 
-		// Force Path Style (only for the generic "Other S3-compatible" provider —
-		// AWS/R2/RustFS each pin path-style behaviour in `shouldForcePathStyle`).
-		if (this.plugin.settings.provider === 'custom') {
+		if (this.connection.provider === 'custom') {
 			section.add('Force path style', 'Use path-style URL format (required for some S3 compatible services)', (setting) => {
-				setting.addToggle((toggle) => {
-					toggle.setValue(this.plugin.settings.forcePathStyle);
-					toggle.onChange(async (value) => {
-						this.plugin.settings.forcePathStyle = value;
-						await this.plugin.saveSettings();
-					});
-				});
+				setting.addToggle((toggle) => toggle
+					.setDisabled(this.savingConnection)
+					.setValue(this.connection.forcePathStyle)
+					.onChange((forcePathStyle) => edit({ forcePathStyle })));
 			});
 		}
 
-		// Test Connection button
 		section.add('Test connection', 'Verify your S3 credentials and bucket access', (setting) => {
 			setting.addButton((button) => {
-				button.setButtonText('Test connection');
+				button.setButtonText('Test connection').setDisabled(this.savingConnection);
 				button.onClick(async () => {
 					await this.testConnection(button.buttonEl);
 				});
 			});
 		});
+
+		section.add('Connection changes', 'Sync and backup use the saved connection. Switching providers or leaving settings discards pending edits.', (setting) => {
+			setting.addButton((button) => {
+				saveButton = button.setButtonText(this.savingConnection ? 'Saving connection…' : 'Save connection')
+					.setCta().onClick(() => this.saveConnectionDraft());
+				updateButtons();
+			});
+			setting.addButton((button) => {
+				discardButton = button.setButtonText('Discard changes').onClick(() => {
+					if (this.savingConnection) return;
+					this.discardConnectionDraft();
+					this.refreshSettings();
+				});
+				updateButtons();
+			});
+		});
+	}
+
+	private async saveConnectionDraft(): Promise<void> {
+		if (!this.connectionDraft || this.savingConnection) return;
+		const draft = this.connectionDraft;
+		this.savingConnection = true;
+		this.refreshSettings();
+		try {
+			await this.plugin.saveConnection(draft);
+			this.discardConnectionDraft();
+			new Notice('Connection saved');
+		} catch (error) {
+			new Notice(error instanceof Error ? error.message : 'Unable to save the connection');
+		} finally {
+			this.savingConnection = false;
+			this.refreshSettings();
+		}
 	}
 
 	/**
@@ -270,7 +347,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * @returns A localized description string appropriate for the current provider.
 	 */
 	private getEndpointDescription(): string {
-		switch (this.plugin.settings.provider) {
+		switch (this.connection.provider) {
 			case 'r2':
 				return 'Your R2 endpoint URL (https://<ACCOUNT_ID>.r2.cloudflarestorage.com)';
 			case 'b2':
@@ -294,7 +371,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 *   (endpoint not shown for AWS).
 	 */
 	private getEndpointPlaceholder(): string {
-		switch (this.plugin.settings.provider) {
+		switch (this.connection.provider) {
 			case 'r2':
 				return 'https://abc123.r2.cloudflarestorage.com';
 			case 'b2':
@@ -308,24 +385,19 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		}
 	}
 
-	/**
-	 * Return a human-readable description for the region field.
-	 *
-	 * The region carries different meaning per provider: Cloudflare R2 ignores it
-	 * (the documented value is `"auto"`), Backblaze B2 requires the region baked
-	 * into its endpoint (e.g. `us-west-004`) because SigV4 signing must match, and
-	 * AWS uses a standard region code.
-	 *
-	 * @returns A localized description string appropriate for the current provider.
-	 */
+	/** Explain which signing region the displayed provider expects. */
 	private getRegionDescription(): string {
-		switch (this.plugin.settings.provider) {
+		switch (this.connection.provider) {
 			case 'r2':
 				return 'Use "auto" for Cloudflare R2';
 			case 'b2':
-				return 'Your Backblaze B2 region, matching the endpoint (e.g., us-west-004)';
+				return 'Filled from your Backblaze B2 endpoint. You can also enter the region manually.';
+			case 'rustfs':
+				return 'Your RustFS server region (defaults to us-east-1)';
+			case 'aws':
+				return 'Your AWS bucket region (e.g., us-east-1)';
 			default:
-				return 'AWS region (e.g., us-east-1)';
+				return 'Enter the region your S3-compatible service expects';
 		}
 	}
 
@@ -335,66 +407,27 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * @returns A provider-specific example region string.
 	 */
 	private getRegionPlaceholder(): string {
-		switch (this.plugin.settings.provider) {
-			case 'r2':
-				return 'auto';
-			case 'b2':
-				return 'us-west-004';
-			default:
-				return 'us-east-1';
-		}
+		const { provider } = this.connection;
+		return provider === 'b2' ? 'us-west-004' : DEFAULT_REGIONS[provider] ?? '';
 	}
 
-	/**
-	 * Test the configured S3 connection and report the result to the user.
-	 *
-	 * Checks the shared provider used for sync and backup. Disables the
-	 * button during the test to prevent concurrent requests. Displays a `Notice` with
-	 * the success message or error, and resets the button text after a short delay.
-	 *
-	 * @param buttonEl - The "Test connection" button element to update during the test.
-	 * @returns A promise that resolves when the test completes and UI is updated.
-	 */
+	/** Use the selected draft without changing the client used by sync and backup. */
 	private async testConnection(buttonEl: HTMLButtonElement): Promise<void> {
-		const originalText = buttonEl.textContent || 'Test Connection';
-		buttonEl.textContent = 'Testing...';
+		const draft = this.connectionDraft;
+		const originalText = buttonEl.textContent;
+		buttonEl.textContent = 'Testing…';
 		buttonEl.disabled = true;
 
 		try {
-			const message = await this.plugin.testConnection();
-
-			new Notice(`✓ ${message}`);
-			buttonEl.textContent = '✓ connected';
-
-			// Reset button text after delay
-			window.setTimeout(() => {
-				buttonEl.textContent = originalText;
-				buttonEl.disabled = false;
-			}, 2000);
+			const message = await this.plugin.testConnection(draft ?? undefined);
+			if (buttonEl.isConnected && draft === this.connectionDraft) new Notice(message);
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			new Notice(`✗ ${errorMessage}`);
-			buttonEl.textContent = '✗ failed';
+			if (buttonEl.isConnected && draft === this.connectionDraft) {
+				new Notice(error instanceof Error ? error.message : 'Unable to test the connection');
+			}
+		} finally {
+			buttonEl.textContent = originalText;
 			buttonEl.disabled = false;
-
-			// Reset button text after delay
-			window.setTimeout(() => {
-				buttonEl.textContent = originalText;
-			}, 2000);
-		}
-	}
-
-	/** Persist the selected secret name and surface failures from Obsidian's settings storage. */
-	private async saveCredentialReference(
-		key: 'accessKeyIdSecret' | 'secretAccessKeySecret',
-		value: string | null,
-	): Promise<void> {
-		// Newer Obsidian versions emit null when the selection is cleared.
-		this.plugin.settings[key] = value ?? '';
-		try {
-			await this.plugin.saveSettings();
-		} catch {
-			new Notice('Unable to save the credential selection. Select the secret again to retry.');
 		}
 	}
 
@@ -410,6 +443,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * @param containerEl - The settings tab container element to append into.
 	 */
 	private renderEncryptionForm(containerEl: HTMLElement): void {
+		if (this.savingConnection) {
+			new Setting(containerEl).setDesc('Wait for the connection save to finish before changing encryption.');
+			return;
+		}
 		const coordinator = this.plugin.getEncryptionCoordinator();
 		const state = coordinator?.getState();
 
@@ -762,9 +799,11 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 			// Sync Prefix
 			section.add('Sync prefix', 'S3 path prefix for synced files (e.g., "vault" → s3://bucket/vault/)', (setting) => {
 				setting.addText((text) => {
+					text.setDisabled(this.savingConnection);
 					text.setPlaceholder('Sync prefix');
 					text.setValue(this.plugin.settings.syncPrefix);
 					text.onChange(async (value) => {
+						if (this.savingConnection) return;
 						this.plugin.settings.syncPrefix = normalizePrefix(value) || 'vault';
 						await this.plugin.saveSettings();
 					});
@@ -1007,10 +1046,11 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		section.add('Reset to defaults', 'Reset all settings except S3 credentials to their default values', (setting) => {
 			setting.addButton((button) => {
 				button.setButtonText('Reset');
+				button.setDisabled(this.savingConnection);
 				button.setWarning();
 				button.onClick(async () => {
 					const confirmed = await this.showResetConfirmation();
-					if (!confirmed) return;
+					if (!confirmed || this.savingConnection) return;
 
 					const { provider, endpoint, region, bucket, accessKeyIdSecret, secretAccessKeySecret, forcePathStyle } =
 						this.plugin.settings;

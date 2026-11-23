@@ -8,10 +8,11 @@
  */
 
 import { Notice, Plugin } from 'obsidian';
-import { S3SyncBackupSettings, DEFAULT_SETTINGS } from './types';
+import { S3SyncBackupSettings, DEFAULT_SETTINGS, type S3ConnectionSettings } from './types';
 import { S3SyncBackupSettingTab } from './settings';
 import { StatusBar } from './statusbar';
 import { S3Provider } from './storage/S3Provider';
+import { validateConnectionSettings } from './storage/S3Config';
 import { SyncJournal } from './sync/SyncJournal';
 import { ChangeTracker } from './sync/ChangeTracker';
 import { SyncPathCodec } from './sync/SyncPathCodec';
@@ -21,12 +22,13 @@ import { SyncScheduler } from './sync/SyncScheduler';
 import { BackupDownloader } from './backup/BackupDownloader';
 import { SnapshotCreator } from './backup/SnapshotCreator';
 import { RetentionManager } from './backup/RetentionManager';
-import { BackupScheduler } from './backup/BackupScheduler';
+import { BackupScheduler, LAST_BACKUP_TIME_KEY } from './backup/BackupScheduler';
 import { BackupListModal } from './backup/BackupListModal';
-import { getOrCreateDeviceId } from './crypto/VaultMarker';
+import { getOrCreateDeviceId, VaultMarker } from './crypto/VaultMarker';
 import { EncryptionCoordinator } from './crypto/EncryptionCoordinator';
 import { BackupResult } from './types';
 import { SecretVault } from './utils/secrets';
+import { computeDestinationFingerprint } from './sync/DestinationFingerprint';
 
 /**
  * S3SyncBackupPlugin — main plugin class.
@@ -83,6 +85,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 	/** Backup in progress flag */
 	private isBackupRunning = false;
+	/** Includes the remote encryption check before the manual sync reaches its engine. */
+	private manualSyncRunning = false;
+	/** Keep new jobs off the connection while an explicit save changes its destination. */
+	private connectionSaveInProgress = false;
+	private dataWriteQueue = Promise.resolve();
 
 	/** Layout and encryption preflight must finish before background jobs start. */
 	private startupCheckComplete = false;
@@ -155,6 +162,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Sync scheduler
 		this.syncScheduler = new SyncScheduler(this, this.syncEngine, this.settings);
 		this.syncScheduler.setCallbacks({
+			canStart: () => !this.connectionSaveInProgress,
 			onSyncStart: () => {
 				this.statusBar?.updateSyncState({
 					status: 'syncing',
@@ -203,6 +211,12 @@ export default class S3SyncBackupPlugin extends Plugin {
 		// Backup scheduler
 		this.backupScheduler = new BackupScheduler(this, this.settings);
 		this.backupScheduler.setCallbacks({
+			canStart: () => !this.connectionSaveInProgress,
+			persistLastBackupTime: (time) => this.queueDataWrite(async () => {
+				const metadata = { [LAST_BACKUP_TIME_KEY]: time };
+				await this.saveData({ ...this.settings, ...metadata });
+				Object.assign(this.settings, metadata);
+			}),
 			onBackupTrigger: async () => {
 				return await this.runBackup();
 			},
@@ -302,18 +316,127 @@ export default class S3SyncBackupPlugin extends Plugin {
 		}
 	}
 
-	/** Test connectivity using the same provider and credentials as sync and backup. */
-	async testConnection(): Promise<string> {
-		if (!this.s3Provider) throw new Error('S3 provider is still initializing');
-		return await this.s3Provider.testConnection();
+	/**
+	 * Test bucket access. A supplied draft uses a short-lived client.
+	 * @param connection - Unsaved connection to test, or omit to test the active connection.
+	 * @returns The connection test result shown in settings.
+	 */
+	async testConnection(connection?: S3ConnectionSettings): Promise<string> {
+		if (!connection) {
+			if (!this.s3Provider) throw new Error('S3 provider is still initializing');
+			return await this.s3Provider.testConnection();
+		}
+
+		const provider = this.createConnectionProvider({ ...this.settings, ...this.normalizeConnection(connection) });
+		try {
+			return await provider.testConnection();
+		} finally {
+			provider.destroy();
+		}
+	}
+
+	private normalizeConnection(connection: S3ConnectionSettings): S3ConnectionSettings {
+		return {
+			provider: connection.provider,
+			endpoint: connection.endpoint.trim(),
+			region: connection.region.trim(),
+			bucket: connection.bucket.trim(),
+			accessKeyIdSecret: connection.accessKeyIdSecret,
+			secretAccessKeySecret: connection.secretAccessKeySecret,
+			forcePathStyle: connection.forcePathStyle,
+		};
+	}
+
+	private createConnectionProvider(settings: S3SyncBackupSettings): S3Provider {
+		return new S3Provider(settings, undefined, () => this.secrets.getCredentials(settings));
+	}
+
+	/** Serialize settings and backup metadata writes to the shared Obsidian data file. */
+	private queueDataWrite(write: () => Promise<void>): Promise<void> {
+		const pending = this.dataWriteQueue.then(write);
+		this.dataWriteQueue = pending.catch(() => {});
+		return pending;
+	}
+
+	/** Save plugin settings to disk and propagate to all subsystems. */
+	async saveSettings(): Promise<void> {
+		await this.queueDataWrite(async () => {
+			await this.saveData({ ...this.settings });
+			this.applySettings();
+		});
 	}
 
 	/**
-	 * Save plugin settings to disk and propagate to all subsystems.
+	 * Validate, persist, and activate an explicitly saved connection after current jobs finish.
+	 * @param connection - The complete connection from settings, including SecretStorage references.
 	 */
-	async saveSettings(): Promise<void> {
-		await this.saveData(this.settings);
+	async saveConnection(connection: S3ConnectionSettings): Promise<void> {
+		const provider = this.s3Provider;
+		if (!provider || !this.startupCheckComplete) throw new Error('Wait for plugin startup to finish, then save again');
+		if (this.connectionSaveInProgress) throw new Error('A connection save is already in progress');
 
+		const normalized = this.normalizeConnection(connection);
+		const candidate = { ...this.settings, ...normalized };
+		const errors = validateConnectionSettings(candidate, this.secrets.getCredentials(candidate));
+		if (errors.length) throw new Error(errors.join('. '));
+
+		this.connectionSaveInProgress = true;
+		try {
+			await this.waitForActiveJobs();
+			if (this.s3Provider !== provider) throw new Error('The plugin was unloaded before saving the connection');
+
+			const next = { ...this.settings, ...normalized };
+			const destinationChanged = computeDestinationFingerprint(this.settings) !==
+				computeDestinationFingerprint(next);
+			if (destinationChanged && this.settings.encryptionEnabled) {
+				await this.verifyEncryptedDestination(next);
+			}
+
+			await this.queueDataWrite(async () => {
+				if (this.s3Provider !== provider) throw new Error('The plugin was unloaded before saving the connection');
+				await this.saveData({ ...this.settings, ...normalized });
+				// Change only connection fields, preserving any unrelated edits made during the write.
+				Object.assign(this.settings, normalized);
+				provider.updateSettings(this.settings);
+			});
+
+			if (this.s3Provider === provider) {
+				if (destinationChanged) this.encryptionCoordinator?.resetForDestinationChange();
+				try {
+					await this.checkConnectionEncryption(() => this.queueDataWrite(() => this.saveData({ ...this.settings })));
+				} catch {
+					this.encryptionCoordinator?.resetForDestinationChange();
+					new Notice('Connection saved. Unable to prepare vault encryption. Try syncing again to recheck it.', 10000);
+				}
+			}
+		} finally {
+			this.connectionSaveInProgress = false;
+			if (this.s3Provider === provider) this.resumeStartupJobs();
+		}
+	}
+
+	private async waitForActiveJobs(): Promise<void> {
+		while (this.s3Provider && (this.manualSyncRunning || this.syncEngine?.isInProgress() ||
+			this.isBackupRunning || this.encryptionCoordinator?.getState().isBusy)) {
+			await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+		}
+	}
+
+	/** Switching an encrypted vault must not silently make future transfers plaintext. */
+	private async verifyEncryptedDestination(settings: S3SyncBackupSettings): Promise<void> {
+		const provider = this.createConnectionProvider(settings);
+		try {
+			const marker = new VaultMarker(provider, settings.syncPrefix);
+			const exists = await marker.exists().catch(() => {
+				throw new Error('Unable to verify encryption at the new destination. Check the connection and try again');
+			});
+			if (!exists) throw new Error('The new destination must have vault encryption enabled before switching this encrypted vault');
+		} finally {
+			provider.destroy();
+		}
+	}
+
+	private applySettings(): void {
 		if (this.s3Provider) {
 			this.s3Provider.updateSettings(this.settings);
 		}
@@ -376,7 +499,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 		const provider = this.s3Provider;
 		if (!provider) return;
 		try {
-			await this.checkEncryptionOnStartup();
+			await this.checkConnectionEncryption();
 		} catch {
 			if (this.s3Provider === provider) {
 				new Notice('Unable to prepare vault encryption. Reload the plugin to retry.', 10000);
@@ -396,7 +519,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Call after startup preflight or after the user unlocks the vault in settings.
 	 */
 	resumeStartupJobs(): void {
-		if (!this.startupCheckComplete || this.encryptionCoordinator?.shouldBlock()) return;
+		if (this.connectionSaveInProgress || !this.startupCheckComplete || this.encryptionCoordinator?.shouldBlock()) return;
 		if (this.startupSyncPending && this.settings.syncEnabled && this.settings.syncOnStartup) {
 			this.startupSyncPending = false;
 			void this.syncScheduler?.triggerSync('startup');
@@ -407,12 +530,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 	}
 
 	/** Check the remote marker and attempt to unlock with the remembered passphrase. */
-	private async checkEncryptionOnStartup(): Promise<void> {
+	private async checkConnectionEncryption(saveSettings = () => this.saveSettings()): Promise<void> {
 		if (!this.encryptionCoordinator || !this.settings.bucket) return;
 
-		await this.encryptionCoordinator.refreshRemoteMode(
-			async () => { await this.saveSettings(); },
-		);
+		await this.encryptionCoordinator.refreshRemoteMode(saveSettings);
 
 		const state = this.encryptionCoordinator.getState();
 
@@ -618,6 +739,23 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Trigger manual sync with user feedback via Notice.
 	 */
 	async triggerManualSync(): Promise<void> {
+		if (this.connectionSaveInProgress) {
+			new Notice('Wait for the connection save to finish before syncing');
+			return;
+		}
+		if (this.manualSyncRunning) {
+			new Notice('Sync already in progress...');
+			return;
+		}
+		this.manualSyncRunning = true;
+		try {
+			await this.runManualSync();
+		} finally {
+			this.manualSyncRunning = false;
+		}
+	}
+
+	private async runManualSync(): Promise<void> {
 		if (!this.settings.syncEnabled) {
 			new Notice('Sync is disabled. Enable it in settings.');
 			return;
@@ -678,6 +816,10 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 * Trigger manual backup with user feedback via Notice.
 	 */
 	async triggerManualBackup(): Promise<void> {
+		if (this.connectionSaveInProgress) {
+			new Notice('Wait for the connection save to finish before backing up');
+			return;
+		}
 		if (!this.settings.backupEnabled) {
 			new Notice('Backup is disabled. Enable it in settings.');
 			return;
@@ -733,6 +875,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	 *   `null` if the backup was skipped due to a concurrent run or missing subsystems.
 	 */
 	private async runBackup(): Promise<BackupResult | null> {
+		if (this.connectionSaveInProgress) return null;
 		if (this.isBackupRunning) {
 			if (this.settings.debugLogging) {
 				console.debug('[S3 Backup] Skipping scheduled backup - already running');
@@ -883,6 +1026,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 	getEncryptionCallbacks(): import('./crypto/EncryptionCoordinator').EncryptionCoordinatorCallbacks {
 		return {
 			saveSettings: () => this.saveSettings(),
+			canStartMigration: () => !this.connectionSaveInProgress,
 			pauseSchedulers: () => {
 				this.syncScheduler?.pause();
 				this.backupScheduler?.stop();

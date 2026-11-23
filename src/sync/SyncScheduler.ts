@@ -59,6 +59,7 @@ export class SyncScheduler {
     private encryptionCoordinator: EncryptionCoordinator | null = null;
 
     // Callback for status updates
+    private canStart?: () => boolean;
     private onSyncStart?: () => void;
     private onSyncComplete?: (result: SyncResult) => void;
     private onSyncError?: (error: string) => void;
@@ -88,6 +89,7 @@ export class SyncScheduler {
      * Callbacks are invoked synchronously in the scheduler's async flow so
      * they must not block (e.g. no awaiting heavy I/O inside them).
      *
+     * @param callbacks.canStart - Whether a new sync can start.
      * @param callbacks.onSyncStart    - Invoked immediately before each sync begins.
      * @param callbacks.onSyncComplete - Invoked with the `SyncResult` after a
      *   successful sync (even if individual file errors occurred).
@@ -95,10 +97,12 @@ export class SyncScheduler {
      *   `SyncEngine.sync()` throws an unhandled exception.
      */
     setCallbacks(callbacks: {
+        canStart?: () => boolean;
         onSyncStart?: () => void;
         onSyncComplete?: (result: SyncResult) => void;
         onSyncError?: (error: string) => void;
     }): void {
+        this.canStart = callbacks.canStart;
         this.onSyncStart = callbacks.onSyncStart;
         this.onSyncComplete = callbacks.onSyncComplete;
         this.onSyncError = callbacks.onSyncError;
@@ -248,6 +252,7 @@ export class SyncScheduler {
      *   or if the engine threw an unhandled error.
      */
     async triggerSync(trigger: 'manual' | 'scheduled' | 'startup'): Promise<SyncResult | null> {
+        if (this.canStart?.() === false) return null;
         if (this.syncEngine.isInProgress()) {
             if (this.settings.debugLogging) {
                 console.debug('[S3 Sync] Skipping - sync already in progress');

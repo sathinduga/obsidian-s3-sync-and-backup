@@ -73,15 +73,14 @@ export const BACKUP_INTERVAL_NAMES: Record<BackupInterval, string> = {
 export type RetentionMode = 'days' | 'copies';
 
 /**
- * Complete plugin settings interface.
+ * Connection fields saved together when the user applies connection changes.
  *
  * Secrets (S3 access key ID, secret access key, remembered passphrase) are never
  * persisted in `data.json`. They live in Obsidian's SecretStorage; settings only hold
  * the *names* of the S3 key secrets, while the passphrase uses a fixed secret ID
  * (see `src/utils/secrets.ts`).
  */
-export interface S3SyncBackupSettings {
-	// Connection
+export interface S3ConnectionSettings {
 	provider: S3ProviderType;
 	endpoint: string;
 	region: string;
@@ -92,6 +91,10 @@ export interface S3SyncBackupSettings {
 	secretAccessKeySecret: string;
 	forcePathStyle: boolean;
 
+}
+
+/** Complete plugin settings, including the active storage connection. */
+export interface S3SyncBackupSettings extends S3ConnectionSettings {
 	// Encryption
 	encryptionEnabled: boolean;
 	/** When true, the passphrase is kept in SecretStorage so the vault auto-unlocks

@@ -46,6 +46,8 @@ import { readVaultFile } from '../utils/vaultFiles';
  * pause/resume schedulers and persist settings without circular imports.
  */
 export interface EncryptionCoordinatorCallbacks {
+	/** Avoid starting a migration while a connection save is in progress. */
+	canStartMigration?: () => boolean;
 	saveSettings: () => Promise<void>;
 	pauseSchedulers: () => void;
 	resumeSchedulers: () => void;
@@ -156,8 +158,9 @@ export class EncryptionCoordinator {
 	 * @returns true if passphrase was correct and key was set.
 	 */
 	async unlock(passphrase: string): Promise<boolean> {
+		const destination = computeDestinationFingerprint(this.settings);
 		const key = await this.vaultMarker.verify(passphrase);
-		if (!key) return false;
+		if (!key || computeDestinationFingerprint(this.settings) !== destination) return false;
 
 		this.propagateKey(key);
 		return true;
@@ -204,6 +207,9 @@ export class EncryptionCoordinator {
 			return { success: false, error: validation.message };
 		}
 
+		if (callbacks.canStartMigration?.() === false) {
+			return { success: false, error: 'Wait for the connection save to finish before changing encryption' };
+		}
 		if (this.isBusy) {
 			return { success: false, error: 'Migration already in progress' };
 		}
@@ -259,6 +265,9 @@ export class EncryptionCoordinator {
 			return { success: false, error: 'No encryption key loaded — unlock first' };
 		}
 
+		if (callbacks.canStartMigration?.() === false) {
+			return { success: false, error: 'Wait for the connection save to finish before changing encryption' };
+		}
 		if (this.isBusy) {
 			return { success: false, error: 'Migration already in progress' };
 		}
@@ -391,6 +400,13 @@ export class EncryptionCoordinator {
 		this.payloadCodec.updateKey(key);
 		this.snapshotCreator.setEncryptionKey(key);
 		this.backupDownloader.setEncryptionKey(key);
+	}
+
+	/** Forget the previous destination's key until the new marker has been checked. */
+	resetForDestinationChange(): void {
+		this.propagateKey(null);
+		this.remoteMode = 'plaintext';
+		this.remoteCheckFailed = true;
 	}
 
 	updateSettings(settings: S3SyncBackupSettings): void {
