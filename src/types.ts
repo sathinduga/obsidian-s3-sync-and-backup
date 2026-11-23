@@ -97,6 +97,8 @@ export interface S3ConnectionSettings {
 export interface S3SyncBackupSettings extends S3ConnectionSettings {
 	// Encryption
 	encryptionEnabled: boolean;
+	/** Keep transfers blocked until the new destination's encryption marker verifies the passphrase. */
+	pendingEncryptedConnection?: boolean;
 	/** When true, the passphrase is kept in SecretStorage so the vault auto-unlocks
 	 *  on startup without user interaction. */
 	rememberPassphrase: boolean;

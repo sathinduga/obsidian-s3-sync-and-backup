@@ -90,9 +90,11 @@ export class BackupScheduler {
     /**
      * Register the callbacks that the scheduler will invoke during backup lifecycle events.
      *
-     * Both callbacks are optional — if `onBackupTrigger` is not set, `checkAndRunBackup`
+     * All callbacks are optional — if `onBackupTrigger` is not set, `checkAndRunBackup`
      * will do nothing. `onBackupComplete` is useful for updating UI (e.g., status bar).
      *
+     * @param callbacks.canStart - Whether to start a new scheduled backup.
+     * @param callbacks.persistLastBackupTime - Shared writer for the last successful backup timestamp.
      * @param callbacks.onBackupTrigger - Async function that performs the actual backup.
      *   Should return a `BackupResult` on success, or `null`/reject on failure.
      * @param callbacks.onBackupComplete - Called after each backup attempt (successful or

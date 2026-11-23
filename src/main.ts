@@ -241,6 +241,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 			this.backupDownloader,
 			this.settings,
 			this.deviceId,
+			(destination, onSaved) => this.saveEncryptionConfirmation(destination, onSaved),
 		);
 
 		// Wire coordinator into the sync scheduler so scheduled syncs are blocked
@@ -388,15 +389,21 @@ export default class S3SyncBackupPlugin extends Plugin {
 			const next = { ...this.settings, ...normalized };
 			const destinationChanged = computeDestinationFingerprint(this.settings) !==
 				computeDestinationFingerprint(next);
-			if (destinationChanged && this.settings.encryptionEnabled) {
+			const sourceIsEncrypted = this.encryptionCoordinator?.getState().remoteMode === 'encrypted';
+			const needsEncryptionConfirmation = destinationChanged &&
+				(this.settings.encryptionEnabled || this.settings.pendingEncryptedConnection || sourceIsEncrypted);
+			if (needsEncryptionConfirmation) {
 				await this.verifyEncryptedDestination(next);
 			}
 
+			const encryptionRequirement = needsEncryptionConfirmation
+				? { pendingEncryptedConnection: true, encryptionEnabled: true }
+				: {};
 			await this.queueDataWrite(async () => {
 				if (this.s3Provider !== provider) throw new Error('The plugin was unloaded before saving the connection');
-				await this.saveData({ ...this.settings, ...normalized });
-				// Change only connection fields, preserving any unrelated edits made during the write.
-				Object.assign(this.settings, normalized);
+				await this.saveData({ ...this.settings, ...normalized, ...encryptionRequirement });
+				// Preserve unrelated edits made during the write.
+				Object.assign(this.settings, normalized, encryptionRequirement);
 				provider.updateSettings(this.settings);
 			});
 
@@ -413,6 +420,17 @@ export default class S3SyncBackupPlugin extends Plugin {
 			this.connectionSaveInProgress = false;
 			if (this.s3Provider === provider) this.resumeStartupJobs();
 		}
+	}
+
+	/** Persist verified encryption before publishing the new key or allowing transfers. */
+	private saveEncryptionConfirmation(destination: string, onSaved: () => void): Promise<void> {
+		return this.queueDataWrite(async () => {
+			const isCurrent = () => this.s3Provider && computeDestinationFingerprint(this.settings) === destination;
+			if (!isCurrent()) throw new Error('The destination changed while verifying vault encryption');
+			await this.saveData({ ...this.settings, pendingEncryptedConnection: false, encryptionEnabled: true });
+			if (!isCurrent()) throw new Error('The destination changed while verifying vault encryption');
+			onSaved();
+		});
 	}
 
 	private async waitForActiveJobs(): Promise<void> {
@@ -537,13 +555,22 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		const state = this.encryptionCoordinator.getState();
 
-		if (this.encryptionCoordinator.getBlockReason() && state.remoteMode === 'plaintext') {
-			new Notice('Unable to check vault encryption. Check the connection and try syncing again.', 10000);
+		const blockReason = this.encryptionCoordinator.getBlockReason();
+		if (blockReason && state.remoteMode === 'plaintext') {
+			new Notice(this.settings.pendingEncryptedConnection
+				? blockReason
+				: 'Unable to check vault encryption. Check the connection and try syncing again.', 10000);
 		} else if (state.remoteMode === 'encrypted' && !state.hasKey) {
 			// Auto-unlock with saved passphrase if "remember passphrase" is enabled
 			const savedPassphrase = this.settings.rememberPassphrase ? this.secrets.getPassphrase() : '';
 			if (savedPassphrase) {
-				const success = await this.encryptionCoordinator.unlock(savedPassphrase);
+				let success: boolean;
+				try {
+					success = await this.encryptionCoordinator.unlock(savedPassphrase);
+				} catch {
+					new Notice('Unable to save encryption confirmation. Unlock the vault in settings to retry.', 10000);
+					return;
+				}
 				if (success) {
 					if (this.settings.debugLogging) {
 						console.debug('[S3 Sync] Auto-unlocked vault with saved passphrase');
@@ -767,9 +794,11 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		// Encryption preflight: refresh remote state and block if needed
 		if (this.encryptionCoordinator) {
-			await this.encryptionCoordinator.refreshRemoteMode(
-				async () => { await this.saveSettings(); },
-			);
+			if (this.settings.pendingEncryptedConnection) {
+				await this.checkConnectionEncryption();
+			} else {
+				await this.encryptionCoordinator.refreshRemoteMode(() => this.saveSettings());
+			}
 			const blockReason = this.encryptionCoordinator.getBlockReason();
 			if (blockReason) {
 				new Notice(`Sync blocked: ${blockReason}`);

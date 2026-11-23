@@ -290,6 +290,116 @@ describe('Connection activation', () => {
 		}
 	});
 
+	it('keeps an encrypted destination blocked if its marker disappears during the connection save', async () => {
+		const sync = jest.spyOn(SyncScheduler.prototype, 'triggerSync').mockResolvedValue(null);
+		const backup = jest.spyOn(BackupScheduler.prototype, 'start').mockResolvedValue(undefined);
+		const snapshot = jest.spyOn(SnapshotCreator.prototype, 'createSnapshot');
+		let markerPresent = true;
+		jest.spyOn(VaultMarker.prototype, 'exists').mockImplementation(async () => markerPresent);
+		jest.spyOn(VaultMarker.prototype, 'getMetadata').mockResolvedValue({
+			version: 3, state: 'enabled', salt: 'fixture', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '',
+		});
+		const initial = { ...savedConnection, encryptionEnabled: true, syncEnabled: true, backupEnabled: true, autoSyncEnabled: false };
+		const original = await loadPlugin(false, initial);
+		let persisted: Partial<S3SyncBackupSettings> = {};
+		jest.spyOn(original.plugin, 'saveData').mockImplementation(async (data: S3SyncBackupSettings) => {
+			persisted = { ...data };
+			markerPresent = false;
+		});
+
+		try {
+			original.layoutReady();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			await original.plugin.saveConnection(newConnection);
+			expect(original.plugin.settings).toMatchObject({ ...newConnection, encryptionEnabled: true });
+			expect(original.plugin.getEncryptionCoordinator()?.shouldBlock()).toBe(true);
+			expect(persisted).toMatchObject({ ...newConnection, encryptionEnabled: true, pendingEncryptedConnection: true });
+
+			await original.plugin.triggerManualSync();
+			await original.plugin.triggerManualBackup();
+			expect(sync).not.toHaveBeenCalled();
+			expect(backup).not.toHaveBeenCalled();
+			expect(snapshot).not.toHaveBeenCalled();
+		} finally {
+			original.plugin.onunload();
+		}
+
+		const reopened = await loadPlugin(false, persisted);
+		try {
+			reopened.layoutReady();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			await reopened.plugin.triggerManualSync();
+			await reopened.plugin.triggerManualBackup();
+			expect(reopened.plugin.settings).toMatchObject({ ...newConnection, encryptionEnabled: true });
+			expect(reopened.plugin.getEncryptionCoordinator()?.shouldBlock()).toBe(true);
+			expect(sync).not.toHaveBeenCalled();
+			expect(backup).not.toHaveBeenCalled();
+			expect(snapshot).not.toHaveBeenCalled();
+		} finally {
+			reopened.plugin.onunload();
+		}
+	});
+
+	it('keeps the recovered destination blocked until a correct passphrase and confirmation are saved', async () => {
+		jest.spyOn(VaultMarker.prototype, 'exists').mockResolvedValue(true);
+		jest.spyOn(VaultMarker.prototype, 'getMetadata').mockResolvedValue({
+			version: 3, state: 'enabled', salt: 'fixture', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '',
+		});
+		jest.spyOn(VaultMarker.prototype, 'verify').mockResolvedValueOnce(null).mockResolvedValue(new Uint8Array(32));
+		const { plugin, layoutReady } = await loadPlugin(false, {
+			...newConnection, encryptionEnabled: true, pendingEncryptedConnection: true, syncEnabled: false, backupEnabled: false,
+		});
+		const save = jest.spyOn(plugin, 'saveData').mockRejectedValueOnce(new Error('Disk write failed'));
+		try {
+			layoutReady();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const coordinator = plugin.getEncryptionCoordinator();
+			if (!coordinator) throw new Error('Missing encryption coordinator');
+			expect(coordinator.shouldBlock()).toBe(true);
+			await expect(coordinator.unlock('incorrect passphrase')).resolves.toBe(false);
+			expect(save).not.toHaveBeenCalled();
+
+			await expect(coordinator.unlock('fixture passphrase')).rejects.toThrow('Disk write failed');
+			expect(plugin.settings.pendingEncryptedConnection).toBe(true);
+			expect(coordinator.getState().hasKey).toBe(false);
+			expect(coordinator.shouldBlock()).toBe(true);
+
+			await expect(coordinator.unlock('fixture passphrase')).resolves.toBe(true);
+			expect(save).toHaveBeenLastCalledWith(expect.objectContaining({
+				...newConnection, encryptionEnabled: true, pendingEncryptedConnection: false,
+			}));
+			expect(coordinator.getState().hasKey).toBe(true);
+			expect(coordinator.shouldBlock()).toBe(false);
+		} finally {
+			plugin.onunload();
+		}
+	});
+
+	it('finishes confirming the saved destination with the remembered passphrase on startup', async () => {
+		jest.spyOn(VaultMarker.prototype, 'exists').mockResolvedValue(true);
+		jest.spyOn(VaultMarker.prototype, 'getMetadata').mockResolvedValue({
+			version: 3, state: 'enabled', salt: 'fixture', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '',
+		});
+		jest.spyOn(VaultMarker.prototype, 'verify').mockResolvedValue(new Uint8Array(32));
+		const sync = jest.spyOn(SyncScheduler.prototype, 'triggerSync').mockResolvedValue(null);
+		const backup = jest.spyOn(BackupScheduler.prototype, 'start').mockResolvedValue(undefined);
+		const { plugin, layoutReady } = await loadPlugin(true, {
+			...newConnection, encryptionEnabled: true, pendingEncryptedConnection: true, autoSyncEnabled: false,
+		});
+		const save = jest.spyOn(plugin, 'saveData');
+		try {
+			layoutReady();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(save).toHaveBeenCalledWith(expect.objectContaining({ pendingEncryptedConnection: false, encryptionEnabled: true }));
+			expect(plugin.getEncryptionCoordinator()?.getState().hasKey).toBe(true);
+			expect(sync).toHaveBeenCalledWith('startup');
+			expect(backup).toHaveBeenCalledTimes(1);
+			expect(save.mock.invocationCallOrder[0]).toBeLessThan(sync.mock.invocationCallOrder[0]!);
+		} finally {
+			plugin.onunload();
+		}
+	});
+
 	it('pauses jobs during the new destination check and clears the previous encryption key', async () => {
 		const sync = jest.spyOn(SyncScheduler.prototype, 'triggerSync').mockResolvedValue(null);
 		jest.spyOn(BackupScheduler.prototype, 'start').mockResolvedValue(undefined);

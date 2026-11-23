@@ -250,12 +250,14 @@ describe('S3 Sync + Backup settings', () => {
 		expect(modernRows(tab).some(({ name }) => name === 'Sync on startup')).toBe(true);
 	});
 
-	it('keeps passphrase entry and unlock together when opened from search', async () => {
+	it.each(['locked vault', 'unconfirmed connection'])('keeps passphrase entry and unlock together for a %s', async (which) => {
 		jest.mocked(requireApiVersion).mockReturnValue(true);
 		const { tab, plugin, update } = createTab();
+		const pending = which === 'unconfirmed connection';
+		Object.assign(plugin.settings, { pendingEncryptedConnection: pending });
 		const unlock = jest.fn().mockResolvedValue(true);
 		plugin.getEncryptionCoordinator.mockReturnValue({
-			getState: () => ({ remoteMode: 'encrypted', hasKey: false }),
+			getState: () => ({ remoteMode: pending ? 'plaintext' : 'encrypted', hasKey: false }),
 			unlock,
 		});
 		const form = modernRows(tab).find(({ name }) => name === 'End-to-end encryption');

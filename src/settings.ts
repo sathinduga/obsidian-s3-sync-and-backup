@@ -437,6 +437,7 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 	 * The UI state is derived from the EncryptionCoordinator's runtime state:
 	 * - Plaintext + no key → show "Enable encryption" toggle + passphrase field
 	 * - Encrypted + no key → show "Unlock" passphrase field (vault locked)
+	 * - Pending encrypted connection → show unlock even when the marker is temporarily missing
 	 * - Encrypted + key loaded → show "Encryption active" status + disable button
 	 * - Transitioning → show migration status message
 	 *
@@ -449,9 +450,10 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		}
 		const coordinator = this.plugin.getEncryptionCoordinator();
 		const state = coordinator?.getState();
+		const pendingConnection = this.plugin.settings.pendingEncryptedConnection;
 
 		// State: transitioning (migration in progress on this or another device)
-		if (state?.remoteMode === 'transitioning') {
+		if (state?.remoteMode === 'transitioning' && !pendingConnection) {
 			const noteEl = containerEl.createDiv({ cls: 's3-sync-backup-warning' });
 			noteEl.createEl('p', {
 				text: 'Encryption state transition in progress. Sync and backup are paused until migration completes.',
@@ -460,10 +462,12 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 		}
 
 		// State: encrypted but no key loaded (locked — other device enabled, or restart)
-		if (state?.remoteMode === 'encrypted' && !state.hasKey) {
+		if (pendingConnection || (state?.remoteMode === 'encrypted' && !state.hasKey)) {
 			const noteEl = containerEl.createDiv({ cls: 's3-sync-backup-warning' });
 			noteEl.createEl('p', {
-				text: 'Vault is encrypted. Enter your passphrase to unlock sync and backup.',
+				text: pendingConnection
+					? 'Sync and backup are paused until you unlock the saved destination. Restore its encryption marker if it is missing.'
+					: 'Vault is encrypted. Enter your passphrase to unlock sync and backup.',
 			});
 
 			let passphraseValue = '';
@@ -515,7 +519,9 @@ export class S3SyncBackupSettingTab extends PluginSettingTab {
 								new Notice('Vault unlocked successfully');
 								this.refreshSettings();
 							} else {
-								new Notice('Incorrect passphrase');
+								new Notice(pendingConnection
+									? 'Unable to verify the passphrase with the destination’s encryption marker'
+									: 'Incorrect passphrase');
 							}
 						} catch (error) {
 							const msg = error instanceof Error ? error.message : 'Unknown error';

@@ -248,8 +248,8 @@ export class SyncScheduler {
      *
      * @param trigger - The source that initiated this sync, for debug logging.
      * @returns A promise resolving to the `SyncResult` from the engine, or
-     *   `null` if the sync was skipped because one was already in progress
-     *   or if the engine threw an unhandled error.
+     *   `null` if the connection is changing, encryption blocks sync, another
+     *   sync is in progress, or the engine threw an unhandled error.
      */
     async triggerSync(trigger: 'manual' | 'scheduled' | 'startup'): Promise<SyncResult | null> {
         if (this.canStart?.() === false) return null;

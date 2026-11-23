@@ -11,10 +11,11 @@ global.TextEncoder = TextEncoder;
 global.TextDecoder = TextDecoder as typeof global.TextDecoder;
 
 // Polyfill crypto for Node.js tests
-// This is needed for tweetnacl which uses crypto.getRandomValues
+// Provide secure randomness for tweetnacl and migration IDs for vault markers.
 Object.defineProperty(global, 'crypto', {
     value: {
         getRandomValues: (arr: Uint8Array) => crypto.randomFillSync(arr),
+        randomUUID: () => crypto.randomUUID(),
     },
 });
 

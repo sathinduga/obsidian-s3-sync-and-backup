@@ -52,7 +52,7 @@ Vault synchronization and scheduled backups across devices using S3-compatible s
    - **Access Key ID** & **Secret Access Key**: select an existing secret or create a new one in Obsidian's Keychain. Requires Obsidian 1.11.5 or later for encrypted desktop secret storage. Plugin version 4.2.6 supports Obsidian 1.8.7 and later.
    - **Force Path Style**: Only shown for the **Other S3-compatible** provider — AWS S3, Cloudflare R2, Backblaze B2, and RustFS each use a fixed addressing mode (path-style for R2/B2/RustFS, virtual-hosted for AWS).
 4. Click **Test connection** to verify credentials and bucket access. The test uses the values currently in the form.
-5. Click **Save connection** to use the new connection for sync and backup. Switching providers, discarding changes, or leaving Settings restores the saved connection when you return to it. If your saved connection uses vault encryption, the new destination must already have vault encryption enabled before you can switch.
+5. Click **Save connection** to use the new connection for sync and backup. Switching providers, discarding changes, or leaving Settings restores the saved connection when you return to it. If your saved connection uses vault encryption, the new destination must already have vault encryption enabled. Sync and backup stay paused across retries and restarts until the new destination's marker verifies the passphrase. If the marker is missing, restore it at the destination before unlocking in **Encryption**.
 
 ### 2. Enable Sync
 1. In the **Sync** section, toggle **Enable sync** (on by default).
