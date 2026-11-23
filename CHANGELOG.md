@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.1.2](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/5.1.1...5.1.2) (2026-11-23)
+
+
+### Bug Fixes
+
+* **backup:** finish ZIP exports before switching connections ([d6f8a9f](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/d6f8a9f38c84127be0b3e1ea5814d69ce790571d))
+* **crypto:** preserve encryption while switching connections ([d43c2a1](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/d43c2a1b919d5b1ee8a7ca958cfd7f9ad3d4e3dd))
+* **settings:** stage provider changes until explicitly saved ([40c04e5](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/40c04e56c7bedb383cc1c813f1468a3abae6dc53))
+* **settings:** stage provider changes until explicitly saved ([b96ef38](https://github.com/sathinduga/obsidian-s3-sync-and-backup/commit/b96ef38c6f495df1b7b68a6ffaf3ef4caa14fb29)), closes [#66](https://github.com/sathinduga/obsidian-s3-sync-and-backup/issues/66)
+
 ## [5.1.1](https://github.com/sathinduga/obsidian-s3-sync-and-backup/compare/5.1.0...5.1.1) (2026-11-19)
 
 
