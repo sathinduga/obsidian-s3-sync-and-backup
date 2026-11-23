@@ -1,10 +1,12 @@
 /** Exercises plugin startup and backup orchestration across module boundaries. */
-import { Notice, requestUrl, type App, type PluginManifest } from 'obsidian';
+import { Notice, requestUrl, type App, type PluginManifest, type RequestUrlResponse } from 'obsidian';
+import JSZip from 'jszip';
 import S3SyncBackupPlugin from '../src/main';
 import { BackupScheduler } from '../src/backup/BackupScheduler';
 import { RetentionManager } from '../src/backup/RetentionManager';
 import { SnapshotCreator } from '../src/backup/SnapshotCreator';
 import { EncryptionCoordinator } from '../src/crypto/EncryptionCoordinator';
+import { encrypt } from '../src/crypto/FileEncryptor';
 import { VaultMarker } from '../src/crypto/VaultMarker';
 import { SyncJournal } from '../src/sync/SyncJournal';
 import { SyncScheduler } from '../src/sync/SyncScheduler';
@@ -165,6 +167,65 @@ describe('Connection activation', () => {
 		} finally {
 			finishBackup({ success: false, backupName: 'snapshot', filesBackedUp: 0, totalSize: 0, startedAt: 1, completedAt: 2, errors: [] });
 			await backup;
+			plugin.onunload();
+		}
+	});
+
+	it('finishes decrypting a ZIP from the saved destination before activating the new connection', async () => {
+		jest.spyOn(EncryptionCoordinator.prototype, 'refreshRemoteMode').mockResolvedValue(undefined);
+		const key = new Uint8Array(32).fill(7);
+		jest.spyOn(VaultMarker.prototype, 'verify').mockResolvedValue(key);
+		const { plugin, layoutReady } = await loadPlugin(false, { ...savedConnection, syncEnabled: false, backupEnabled: false });
+		const prefix = 'backups/backup-test/';
+		const response = (data: Uint8Array): RequestUrlResponse => ({
+			status: 200, headers: {}, arrayBuffer: new Uint8Array(data).buffer, json: null, text: '',
+		});
+		const plaintext = new TextEncoder().encode('From the saved connection');
+		let releaseFile!: () => void;
+		const filePaused = new Promise<void>((resolve) => { releaseFile = resolve; });
+		let startFile!: () => void;
+		const fileStarted = new Promise<void>((resolve) => { startFile = resolve; });
+		jest.mocked(requestUrl).mockClear().mockImplementation(async (input) => {
+			const { hostname, pathname, searchParams } = new URL(typeof input === 'string' ? input : input.url);
+			expect(hostname).toBe('aws-test-bucket.s3.eu-west-2.amazonaws.com');
+			if (searchParams.has('list-type')) {
+				return response(new TextEncoder().encode(`<ListBucketResult><Contents><Key>${prefix}Note.md</Key><Size>32</Size></Contents></ListBucketResult>`));
+			}
+			if (pathname.endsWith('/Note.md')) {
+				startFile();
+				await filePaused;
+				return response(encrypt(plaintext, key));
+			}
+			return response(new TextEncoder().encode('{"encrypted":true}'));
+		});
+		const operations: Promise<unknown>[] = [];
+		const save = jest.spyOn(plugin, 'saveData');
+		try {
+			layoutReady();
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			await expect(plugin.getEncryptionCoordinator()?.unlock('fixture passphrase')).resolves.toBe(true);
+			const downloader = plugin.getBackupDownloader();
+			if (!downloader) throw new Error('Missing backup downloader');
+			const exporting = downloader.createDownloadBlob('backup-test');
+			operations.push(exporting);
+			await Promise.race([fileStarted, exporting]);
+			const applying = plugin.saveConnection(newConnection);
+			operations.push(applying);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			expect(plugin.settings).toMatchObject(savedConnection);
+			expect(save).not.toHaveBeenCalled();
+			const requestCount = jest.mocked(requestUrl).mock.calls.length;
+			await expect(downloader.createDownloadBlob('backup-later')).rejects.toThrow('Wait for the connection save');
+			expect(requestUrl).toHaveBeenCalledTimes(requestCount);
+
+			releaseFile();
+			const zip = await JSZip.loadAsync(await (await exporting).arrayBuffer());
+			await expect(zip.file('Note.md')?.async('string')).resolves.toBe('From the saved connection');
+			await applying;
+			expect(plugin.settings).toMatchObject(newConnection);
+		} finally {
+			releaseFile();
+			await Promise.allSettled(operations);
 			plugin.onunload();
 		}
 	});

@@ -140,7 +140,7 @@ On Obsidian 1.13.0 and later, use Settings search to find plugin options such as
 | **Secret access key** | Secret (from Obsidian's secret storage) holding your S3 secret access key. |
 | **Force path style** | Use path-style URLs instead of virtual-hosted. Required for some self-hosted S3-compatible endpoints. Only shown for the **Other S3-compatible** provider — AWS, R2, B2, and RustFS each pin a fixed addressing mode internally. |
 | **Test connection** | Check the displayed connection's credentials and bucket access without saving. |
-| **Save connection** | Apply the displayed connection to sync and backup after any current jobs finish. |
+| **Save connection** | Apply the displayed connection after current syncs, backups, and ZIP exports finish. |
 | **Discard changes** | Restore the saved connection. |
 
 ### Encryption

@@ -205,7 +205,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 		// Backup components
 		this.snapshotCreator = new SnapshotCreator(this.app, this.s3Provider, this.settings);
-		this.backupDownloader = new BackupDownloader(this.s3Provider, this.settings);
+		this.backupDownloader = new BackupDownloader(this.s3Provider, this.settings, () => !this.connectionSaveInProgress);
 		this.retentionManager = new RetentionManager(this.s3Provider, this.settings);
 
 		// Backup scheduler
@@ -417,7 +417,7 @@ export default class S3SyncBackupPlugin extends Plugin {
 
 	private async waitForActiveJobs(): Promise<void> {
 		while (this.s3Provider && (this.manualSyncRunning || this.syncEngine?.isInProgress() ||
-			this.isBackupRunning || this.encryptionCoordinator?.getState().isBusy)) {
+			this.isBackupRunning || this.backupDownloader?.isExporting() || this.encryptionCoordinator?.getState().isBusy)) {
 			await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
 		}
 	}
